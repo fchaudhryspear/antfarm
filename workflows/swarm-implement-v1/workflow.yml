@@ -23,6 +23,28 @@ tags:
   - implementation
   - feature-development
 
+context:
+  repo_path: ""          # REQUIRED: --repo-path=/path/to/repo
+  repo_name: ""          # REQUIRED: --context repo_name=my-project
+  arch_path: ""          # REQUIRED: --context arch_path=docs/architecture/spec.json
+  prd_path: ""           # REQUIRED: --context prd_path=docs/PRD.md
+  branch: ""             # REQUIRED: --context branch=feature/my-feature
+  build_cmd: "npm run build 2>/dev/null || python -m py_compile **/*.py 2>/dev/null || true"
+  test_cmd: "npm test --passWithNoTests 2>/dev/null || pytest -x -q 2>/dev/null || true"
+  exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
+  s3_bucket: ""          # OPTIONAL: override S3 bucket for frontend deploy
+  cloudfront_dist_id: "" # OPTIONAL: override CloudFront distribution ID
+  frontend_build_cmd: "npm run build"
+  frontend_build_dir: "dist"
+
+acceptance_criteria:
+  - "Phase 1 scaffold completes with migrations, deps, and infra config"
+  - "Phase 2 backend implementation completes with models, repos, services, handlers, and tests"
+  - "Phase 3 frontend implementation completes with components, hooks, and routes"
+  - "Phase 4 DevOps completes with monitoring, deployment, and observability config"
+  - "All commits follow conventional commit format"
+  - "No hardcoded project names, paths, or IDs"
+
 polling:
   model: ollama-cloud/kimi-k2.5:cloud
   intervalSeconds: 30
@@ -425,6 +447,34 @@ steps:
     depends_on: [phase-2-handlers-crud, phase-2-handlers-webhooks, phase-2-middleware]
     on_fail: escalate_to_human
 
+  - id: phase-2-lint
+    agent: backend-engineer
+    depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers]
+    expects: "STATUS:"
+    timeoutSeconds: 600
+    max_retries: 1
+    input: |
+      You are running lint and format fixes after Phase 2 backend implementation.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull origin {{ branch }}
+      3. Run linters and formatters (best-effort, ignore failures):
+         npx eslint --fix . 2>/dev/null; npx prettier --write . 2>/dev/null; python -m black . 2>/dev/null; python -m isort . 2>/dev/null
+      4. If any files changed, commit: style: auto-format phase-2 backend code
+      5. git push origin {{ branch }}
+
+      STATUS: done | skipped (if no formatting changes)
+      FILES_FORMATTED: [list or "none"]
+    on_fail: escalate_to_human
+
   - id: phase-3-frontend-a
     agent: frontend-engineer-a
     input: |
@@ -494,6 +544,34 @@ steps:
     depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers]
     on_fail: escalate_to_human
 
+  - id: phase-3-lint
+    agent: backend-engineer
+    depends_on: [phase-3-frontend-a, phase-3-frontend-b]
+    expects: "STATUS:"
+    timeoutSeconds: 600
+    max_retries: 1
+    input: |
+      You are running lint and format fixes after Phase 3 frontend implementation.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull origin {{ branch }}
+      3. Run linters and formatters (best-effort, ignore failures):
+         npx eslint --fix . 2>/dev/null; npx prettier --write . 2>/dev/null; python -m black . 2>/dev/null; python -m isort . 2>/dev/null
+      4. If any files changed, commit: style: auto-format phase-3 frontend code
+      5. git push origin {{ branch }}
+
+      STATUS: done | skipped (if no formatting changes)
+      FILES_FORMATTED: [list or "none"]
+    on_fail: escalate_to_human
+
   - id: phase-4-devops
     agent: devops-engineer
     input: |
@@ -524,17 +602,15 @@ steps:
       - If deployment_targets.frontend is defined:
         * Create scripts/deploy-frontend.sh that runs:
           - build command (e.g. npm run build)
-          - aws s3 sync dist/ to {{ s3_bucket }}
-          - aws cloudfront create-invalidation on {{ cloudfront_dist_id }}
+          - aws s3 sync dist/ to {{ s3_bucket }}  (if provided)
+          - aws cloudfront create-invalidation on {{ cloudfront_dist_id }}  (if provided)
         * Create .github/workflows/deploy-frontend.yml for auto-deploy on push to main
         * The workflow must trigger on: push to main + paths: ['frontend/**', 'frontend-v2/**', 'src/**', 'package.json']
         * The workflow must set all required VITE_* env vars as GitHub secrets/actions vars
         * Add S3 bucket name and CloudFront distribution ID to deployment config
-      - If the architecture spec has NO deployment_targets.frontend entry, use defaults:
-        * s3_bucket: flobase-dashboard-prod
-        * cloudfront_dist_id: EAJ0UGQ8HMKT1
-        * build_command: npm run build
-        * build_dir: frontend-v2/dist
+        * s3_bucket: {{ s3_bucket }}  (if provided)
+        * cloudfront_dist_id: {{ cloudfront_dist_id }}  (if provided)
+        * If s3_bucket and cloudfront_dist_id are empty, skip frontend deployment config entirely.
       - After creating deploy-frontend.sh: chmod +x scripts/deploy-frontend.sh
 
       RULES:
@@ -546,7 +622,7 @@ steps:
 
     expects: "STATUS: done"
     max_retries: 1
-    depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers, phase-3-frontend-a, phase-3-frontend-b]
+    depends_on: [phase-2-lint, phase-3-lint]
     on_fail: escalate_to_human
 
 hooks:

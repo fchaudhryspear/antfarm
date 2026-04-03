@@ -1,0 +1,17 @@
+{
+  "id": "swarm-code-review-v3",
+  "name": "10-Agent Parallel Swarm Code Review v3",
+  "version": "3",
+  "description": "Comprehensive parallel codebase review using 10 specialized agents with structured output and parameterized scope. v3 fixes: spawn validation, bounded prompts, pipe-delimited output, separate consolidate agent.",
+  "author": "Optimus",
+  "created": "2026-03-26",
+  "parent": "swarm-code-review-v2",
+  "changes": [
+    "Parameterized scope via {{ scope }} template variable",
+    "Pipe-delimited output format (SCORE | CATEGORY | FINDINGS)",
+    "Separate consolidate agent (not reusing code-quality)",
+    "90-min timeout for deep analysis agents",
+    "Explicit gap-handling in consolidate prompt",
+    "Install-time spawn target validation"
+  ]
+}

@@ -1,0 +1,237 @@
+# DEPRECATED: Replaced by MO_ROUTING.md v2.0 fixed-assignment routing.
+# Model selection is now handled at the OpenClaw gateway level, not via workflow.
+# This workflow is retained for backward compatibility only.
+deprecated: true
+
+# Model Orchestrator Workflow
+# Integrates Antfarm with the Model Orchestrator for intelligent AI routing
+
+id: model-orchestrator
+name: Model Orchestrator Workflow
+version: 3
+workflow_objective: "Route tasks to the optimal AI model tier for cost-efficient execution and track performance."
+description: |
+  Intelligent model selection and execution workflow with specialized agent routing.
+  Analyzes prompts (Prompt Analyzer - classification specialist).
+  Selects optimal model (Model Router - routing optimization).
+  Executes tasks (Task Executor - backend logic implementation).
+  Reports metrics (Cost Reporter - data analysis and performance tracking).
+acceptance_criteria:
+  - "Task is routed to the correct model tier."
+  - "Cost is within budget constraints."
+  - "Performance metrics are logged."
+global_error_policy: "escalate_to_human"
+
+polling:
+  model: ollama-cloud/glm-5:cloud
+  timeoutSeconds: 600
+  prefer_local: true
+  local_models:
+    analysis: mb_mixtral-16k
+    routing: mb_qwen2.5-72b
+    execution: mb_qwen2.5-coder-32b
+    reporting: mb_command-r-16k
+
+agents:
+  - id: analyzer
+    name: Prompt Analyzer
+    role: analysis
+    description: Analyzes prompts for complexity, task type, and optimal routing.
+    workspace:
+      baseDir: agents/analyzer
+      files:
+        AGENTS.md: agents/analyzer/AGENTS.md
+        SOUL.md: agents/analyzer/SOUL.md
+        IDENTITY.md: agents/analyzer/IDENTITY.md
+
+  - id: router
+    name: Model Router
+    role: analysis
+    description: Selects optimal model based on analysis and routing rules.
+    workspace:
+      baseDir: agents/router
+      files:
+        AGENTS.md: agents/router/AGENTS.md
+        SOUL.md: agents/router/SOUL.md
+        IDENTITY.md: agents/router/IDENTITY.md
+
+  - id: executor
+    name: Task Executor
+    role: coding
+    description: Executes tasks with selected model, tracks performance and cost.
+    workspace:
+      baseDir: agents/executor
+      files:
+        AGENTS.md: agents/executor/AGENTS.md
+        SOUL.md: agents/executor/SOUL.md
+        IDENTITY.md: agents/executor/IDENTITY.md
+
+  - id: reporter
+    name: Cost Reporter
+    role: analysis
+    description: Reports routing decisions, costs, and performance metrics.
+    workspace:
+      baseDir: agents/reporter
+      files:
+        AGENTS.md: agents/reporter/AGENTS.md
+        SOUL.md: agents/reporter/SOUL.md
+        IDENTITY.md: agents/reporter/IDENTITY.md
+
+steps:
+  # Step 1: Analyze the prompt
+  - id: analyze
+    name: Analyze Prompt
+    agent: analyzer
+    description: |
+      Analyze the input prompt to determine:
+      - Task type (general, code, research, search, etc.)
+      - Complexity (simple, medium, complex)
+      - Context size requirements
+      - Special capabilities needed (X search, video, etc.)
+    expects: "STATUS: analyzed"
+    input: |
+      TASK: {{ task }}
+
+      Analyze this task and classify:
+      1. Task type (general/code/research/search/video)
+      2. Complexity level (simple/medium/complex)
+      3. Estimated token count
+      4. Special requirements (X search, video analysis, etc.)
+
+      Output JSON format:
+      {
+        "task_type": "...",
+        "complexity": "...",
+        "estimated_tokens": 1000,
+        "special_requirements": ["..."],
+        "reasoning": "..."
+      }
+    output:
+      analysis: analysis.json
+    max_retries: 3
+
+  # Step 2: Route to optimal model
+  - id: route
+    name: Route to Model
+    agent: router
+    description: Select optimal model based on analysis
+    expects: "STATUS: routed"
+    input: |
+      ANALYSIS: {{ steps.analyze.outputs.analysis }}
+
+      Based on the analysis, select the optimal model from:
+
+      FLASH CLASS (Cheap & Fast):
+      - google/gemini-2.5-flash-lite: $0.10/$0.40 - Simple queries
+      - openai/gpt-4o-mini: $0.15/$0.60 - General tasks
+      - xai/grok-4-1-fast: $0.20/$0.50 - X search (+$0.025/source)
+      - google/gemini-2.5-flash: $0.30/$2.50 - Video, long context
+
+      BALANCED (Good Value):
+      - alibaba/qwen-plus: $0.40/$1.20 - Code, reasoning
+      - moonshot/kimi-k2.5: $0.60/$2.50 - Agent, swarm
+
+      FLAGSHIP (Premium):
+      - alibaba/qwen-max: $1.20/$6.00 - Complex reasoning
+      - google/gemini-2.5-pro: $1.25/$10.00 - Complex, video
+      - xai/grok-2: $2.00/$10.00 - Uncensored, complex
+      - openai/gpt-4o: $2.50/$10.00 - General
+      - anthropic/claude-sonnet-4-5: $3.00/$15.00 - Coding, writing
+
+      Select the cheapest model that can handle the task effectively.
+      Output JSON format:
+      {
+        "selected_model": "...",
+        "estimated_cost_usd": 0.001,
+        "reasoning": "...",
+        "fallback_chain": ["..."],
+        "strategy": "single"
+      }
+    output:
+      routing: routing.json
+    max_retries: 3
+
+  # Step 3: Execute with selected model
+  - id: execute
+    name: Execute Task
+    agent: executor
+    description: Execute the task using the selected model
+    expects: "STATUS: executed"
+    input: |
+      TASK: {{ task }}
+      ROUTING: {{ steps.route.outputs.routing }}
+
+      Execute the task using the selected model.
+      Track:
+      - Actual tokens used
+      - Actual cost
+      - Execution time
+      - Success/failure status
+
+      Output JSON format:
+      {
+        "success": true,
+        "content": "...",
+        "model_used": "...",
+        "tokens_input": 1000,
+        "tokens_output": 500,
+        "cost_usd": 0.001,
+        "duration_seconds": 2.5,
+        "error": null
+      }
+    output:
+      result: result.json
+    max_retries: 3
+    on_fail:
+      escalate_to: human
+
+  # Step 4: Report routing and costs
+  - id: report
+    name: Report Metrics
+    agent: reporter
+    description: Report routing decisions and cost metrics
+    expects: "STATUS: reported"
+    input: |
+      ORIGINAL_TASK: {{ task }}
+      ANALYSIS: {{ steps.analyze.outputs.analysis }}
+      ROUTING: {{ steps.route.outputs.routing }}
+      RESULT: {{ steps.execute.outputs.result }}
+
+      Generate a summary report showing:
+      1. Routing decision with reasoning
+      2. Estimated vs actual cost
+      3. Performance metrics
+      4. Model used with justification
+
+      Output a user-friendly report.
+    output:
+      report: report.md
+    max_retries: 2
+
+hooks:
+  onSuccess:
+    - type: log
+      message: "Model Orchestrator completed successfully"
+    - type: notify
+      message: |
+        ✅ Task completed!
+        Model: {{ steps.execute.outputs.result.model_used }}
+        Cost: ${{ steps.execute.outputs.result.cost_usd }}
+  onFailure:
+    - type: log
+      message: "Model Orchestrator failed"
+    - type: notify
+      message: |
+        ❌ Task failed
+        Error: {{ error }}
+
+config:
+  max_cost_per_task: 1.00
+  max_retries: 3
+  retry_models:
+    - alibaba/qwen-plus
+    - moonshot/kimi-k2.5
+    - google/gemini-2.5-flash
+  enable_x_search: false
+  enable_video: true
+  enable_swarm: true

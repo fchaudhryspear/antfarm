@@ -1,0 +1,12 @@
+{
+  "id": "swarm-code-fix-v1",
+  "name": "10-Domain Parallel Fixer Swarm v1.0",
+  "version": "1.0.0",
+  "description": "Mirrors swarm-code-review-v3 with a dedicated fixer per domain. All 10 fixers run in parallel. Single consolidated PR at the end.",
+  "author": "Optimus",
+  "created": "2026-03-31",
+  "tags": ["swarm", "fixer", "parallel", "code-fix", "automated-pr"],
+  "companion": "swarm-code-review-v3",
+  "requiredContext": ["repo_path", "repo_name", "findings"],
+  "optionalContext": ["branch", "build_cmd", "test_cmd", "max_fixes_per_domain"]
+}

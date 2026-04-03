@@ -1,0 +1,411 @@
+id: pipeline-orchestrator
+name: Full SDLC Pipeline Orchestrator v1.0
+version: 1.0
+workflow_objective: Execute the complete software development lifecycle from feature request to release-ready PR, with human approval gates after requirements and architecture phases.
+description: |
+  Master orchestrator that chains 7 swarms into a complete SDLC pipeline:
+  1. swarm-requirements-v1 → Structured PRD
+  2. Human approval gate (PRD review)
+  3. swarm-architecture-v1 → Technical architecture
+  4. Human approval gate (architecture review)
+  5. swarm-implement-v1 → Code on feature branch
+  6. swarm-code-review-v3 → Code review findings
+  7. swarm-code-fix-v1 → Fixed code + PR
+  8. swarm-qa-v1 → QA validation
+  9. Final report with GO/NO-GO
+
+  The pipeline-controller uses the antfarm CLI to dispatch sub-workflows.
+  Gate-keeper manages human approval via Telegram notifications.
+  Pipeline-reporter generates the final comprehensive report.
+  Retrospective agent analyzes performance and suggests improvements.
+
+  v1.0: Initial release — 10-step pipeline with 4 agents, human gates,
+    timing instrumentation, and retrospective analysis.
+
+context:
+  feature_request: ""    # REQUIRED: plain-text feature description
+  repo_path: ""          # REQUIRED: absolute path to repo
+  repo_name: ""          # REQUIRED: short repo name
+  branch: ""             # REQUIRED: feature branch name
+  auto_approve: "false"  # Set true to skip human gates (CI/testing)
+  notify_channel: ""     # Telegram chat ID for notifications
+  exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
+  build_cmd: "npm run build 2>/dev/null || python -m py_compile **/*.py 2>/dev/null || true"
+  test_cmd: "npm test --passWithNoTests 2>/dev/null || pytest -x -q 2>/dev/null || true"
+  pipeline_directive: "Orchestrate the SDLC pipeline for {{ repo_path }}. Do NOT fabricate results. Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata. Exclude: {{ exclude_patterns }}."
+
+acceptance_criteria:
+  - "All 7 sub-workflows complete successfully or with documented partial success"
+  - "Human gates fire after requirements and architecture (unless auto_approve=true)"
+  - "Final report includes timing per phase, success metrics, and improvement recommendations"
+  - "PRD, architecture spec, and QA report are all written to the repo"
+  - "Feature branch has all implementation + fixes committed"
+  - "No sub-workflow modifies files in node_modules / vendor / _build_artifacts"
+  - "Retrospective analysis written with actionable improvement recommendations"
+
+polling:
+  model: ollama-cloud/glm-5:cloud
+  timeoutSeconds: 43200  # 12 hours max for full pipeline
+
+agents:
+  - id: pipeline-controller
+    name: Pipeline Controller
+    role: orchestrator
+    workspace:
+      baseDir: agents/pipeline-controller
+      files:
+        AGENTS.md: agents/pipeline-controller/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+
+  - id: gate-keeper
+    name: Gate Keeper
+    role: gate
+    workspace:
+      baseDir: agents/gate-keeper
+      files:
+        AGENTS.md: agents/gate-keeper/AGENTS.md
+    model: ollama-cloud/minimax-m2.7:cloud
+
+  - id: pipeline-reporter
+    name: Pipeline Reporter
+    role: reporter
+    workspace:
+      baseDir: agents/pipeline-reporter
+      files:
+        AGENTS.md: agents/pipeline-reporter/AGENTS.md
+    model: ollama-cloud/minimax-m2.7:cloud
+
+  - id: retrospective
+    name: Retrospective Analyst
+    role: analysis
+    workspace:
+      baseDir: agents/retrospective
+      files:
+        AGENTS.md: agents/retrospective/AGENTS.md
+    model: ollama-cloud/glm-5:cloud
+
+steps:
+  - id: dispatch-requirements
+    agent: pipeline-controller
+    expects: 'REQUIREMENTS_DONE:'
+    timeoutSeconds: 6000
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      PHASE: requirements
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      FEATURE_REQUEST: {{ feature_request }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      {{ pipeline_directive }}
+
+      DISPATCH swarm-requirements-v1:
+      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-requirements-v1 "Generate PRD for: {{ feature_request }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context feature_request="{{ feature_request }}"
+
+      POLL until complete:
+      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow status "Generate PRD for: {{ feature_request }}"
+      Poll every 30 seconds. Timeout after 5400 seconds.
+
+      EXTRACT: Locate the PRD file written by swarm-requirements-v1 (typically {{ repo_path }}/docs/prd-*.md or {{ repo_path }}/PRD.md).
+
+      OUTPUT:
+      REQUIREMENTS_DONE: prd_path=<absolute path to PRD file>
+      SWARM_STATUS: <completed|failed>
+      SWARM_DURATION: <seconds>
+
+  - id: gate-requirements
+    agent: gate-keeper
+    depends_on: [dispatch-requirements]
+    expects: 'GATE_STATUS:'
+    timeoutSeconds: 1800
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      PHASE: requirements-gate
+      AUTO_APPROVE: {{ auto_approve }}
+      NOTIFY_CHANNEL: {{ notify_channel }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+
+      {{ pipeline_directive }}
+
+      PREVIOUS PHASE OUTPUT:
+      {{ steps.dispatch-requirements.summary }}
+
+      Summarize the PRD for human review. Read the PRD file referenced in REQUIREMENTS_DONE output.
+      Produce a concise summary (max 500 words) highlighting:
+      - Key features and scope
+      - Open questions or ambiguities
+      - Risk areas
+
+      If AUTO_APPROVE=true: output GATE_STATUS: auto-approved
+      If AUTO_APPROVE=false: output GATE_STATUS: waiting — include the summary for human review.
+        The human will approve or reject via the antfarm UI.
+
+  - id: dispatch-architecture
+    agent: pipeline-controller
+    depends_on: [gate-requirements]
+    expects: 'ARCHITECTURE_DONE:'
+    timeoutSeconds: 6000
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      PHASE: architecture
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      {{ pipeline_directive }}
+
+      PRD OUTPUT FROM REQUIREMENTS PHASE:
+      {{ steps.dispatch-requirements.summary }}
+
+      GATE OUTPUT:
+      {{ steps.gate-requirements.summary }}
+
+      DISPATCH swarm-architecture-v1:
+      Extract prd_path from REQUIREMENTS_DONE output above.
+      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-architecture-v1 "Design architecture for: {{ feature_request }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context prd_path=<extracted prd_path>
+
+      POLL until complete (every 30s, timeout 5400s).
+
+      EXTRACT: Locate the architecture spec file (typically {{ repo_path }}/docs/architecture-*.md).
+
+      OUTPUT:
+      ARCHITECTURE_DONE: arch_path=<absolute path to architecture spec>
+      SWARM_STATUS: <completed|failed>
+      SWARM_DURATION: <seconds>
+
+  - id: gate-architecture
+    agent: gate-keeper
+    depends_on: [dispatch-architecture]
+    expects: 'GATE_STATUS:'
+    timeoutSeconds: 1800
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      PHASE: architecture-gate
+      AUTO_APPROVE: {{ auto_approve }}
+      NOTIFY_CHANNEL: {{ notify_channel }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+
+      {{ pipeline_directive }}
+
+      PREVIOUS PHASE OUTPUT:
+      {{ steps.dispatch-architecture.summary }}
+
+      Summarize the architecture spec for human review. Read the arch spec file referenced in ARCHITECTURE_DONE output.
+      Produce a concise summary (max 500 words) highlighting:
+      - Key architectural decisions
+      - Technology choices and trade-offs
+      - Integration points and dependencies
+      - Risk areas
+
+      If AUTO_APPROVE=true: output GATE_STATUS: auto-approved
+      If AUTO_APPROVE=false: output GATE_STATUS: waiting — include the summary for human review.
+
+  - id: dispatch-implementation
+    agent: pipeline-controller
+    depends_on: [gate-architecture]
+    expects: 'IMPLEMENTATION_DONE:'
+    timeoutSeconds: 6000
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      PHASE: implementation
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      {{ pipeline_directive }}
+
+      REQUIREMENTS OUTPUT:
+      {{ steps.dispatch-requirements.summary }}
+
+      ARCHITECTURE OUTPUT:
+      {{ steps.dispatch-architecture.summary }}
+
+      DISPATCH swarm-implement-v1:
+      Extract prd_path and arch_path from previous outputs.
+      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-implement-v1 "Implement: {{ feature_request }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context prd_path=<prd_path> --context arch_path=<arch_path>
+
+      POLL until complete (every 30s, timeout 5400s).
+
+      EXTRACT: Confirm commits exist on {{ branch }}.
+
+      OUTPUT:
+      IMPLEMENTATION_DONE: branch={{ branch }} commits=<count>
+      SWARM_STATUS: <completed|failed>
+      SWARM_DURATION: <seconds>
+
+  - id: dispatch-review
+    agent: pipeline-controller
+    depends_on: [dispatch-implementation]
+    expects: 'REVIEW_DONE:'
+    timeoutSeconds: 6000
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      PHASE: review
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      {{ pipeline_directive }}
+
+      IMPLEMENTATION OUTPUT:
+      {{ steps.dispatch-implementation.summary }}
+
+      DISPATCH swarm-code-review-v3:
+      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-code-review-v3 "Review code on {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }}
+
+      POLL until complete (every 30s, timeout 5400s).
+
+      EXTRACT: Locate the findings output from the review swarm.
+
+      OUTPUT:
+      REVIEW_DONE: findings_path=<path to findings file or inline findings>
+      FINDINGS_COUNT: <number of findings>
+      SWARM_STATUS: <completed|failed>
+      SWARM_DURATION: <seconds>
+
+  - id: dispatch-fix
+    agent: pipeline-controller
+    depends_on: [dispatch-review]
+    expects: 'FIX_DONE:'
+    timeoutSeconds: 6000
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      PHASE: fix
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      {{ pipeline_directive }}
+
+      REVIEW OUTPUT:
+      {{ steps.dispatch-review.summary }}
+
+      DISPATCH swarm-code-fix-v1:
+      Extract findings from REVIEW_DONE output above.
+      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-code-fix-v1 "Fix findings on {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context findings="<extracted findings>"
+
+      POLL until complete (every 30s, timeout 5400s).
+
+      EXTRACT: Locate the PR URL from the fix swarm output.
+
+      OUTPUT:
+      FIX_DONE: pr_url=<PR URL from swarm-code-fix-v1>
+      SWARM_STATUS: <completed|failed>
+      SWARM_DURATION: <seconds>
+
+  - id: dispatch-qa
+    agent: pipeline-controller
+    depends_on: [dispatch-fix]
+    expects: 'QA_DONE:'
+    timeoutSeconds: 6000
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      PHASE: qa
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      {{ pipeline_directive }}
+
+      FIX OUTPUT:
+      {{ steps.dispatch-fix.summary }}
+
+      DISPATCH swarm-qa-v1:
+      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-qa-v1 "QA validation for {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }}
+
+      POLL until complete (every 30s, timeout 5400s).
+
+      EXTRACT: Locate the QA report.
+
+      OUTPUT:
+      QA_DONE: qa_report_path=<path to QA report>
+      QA_STATUS: <passed|failed|partial>
+      SWARM_STATUS: <completed|failed>
+      SWARM_DURATION: <seconds>
+
+  - id: final-report
+    agent: pipeline-reporter
+    depends_on: [dispatch-qa]
+    expects: 'PIPELINE_REPORT:'
+    timeoutSeconds: 1800
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      FEATURE_REQUEST: {{ feature_request }}
+
+      {{ pipeline_directive }}
+
+      PHASE OUTPUTS (compile these into the report):
+      REQUIREMENTS: {{ steps.dispatch-requirements.summary }}
+      ARCHITECTURE: {{ steps.dispatch-architecture.summary }}
+      IMPLEMENTATION: {{ steps.dispatch-implementation.summary }}
+      REVIEW: {{ steps.dispatch-review.summary }}
+      FIX: {{ steps.dispatch-fix.summary }}
+      QA: {{ steps.dispatch-qa.summary }}
+
+      GATE OUTPUTS:
+      REQUIREMENTS_GATE: {{ steps.gate-requirements.summary }}
+      ARCHITECTURE_GATE: {{ steps.gate-architecture.summary }}
+
+      Generate the comprehensive pipeline report per your AGENTS.md instructions.
+      Write it to {{ repo_path }}/docs/pipeline-report-$(date +%Y-%m-%d).md
+
+  - id: retrospective
+    agent: retrospective
+    depends_on: [final-report]
+    expects: 'RETRO_STATUS:'
+    timeoutSeconds: 1800
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      FEATURE_REQUEST: {{ feature_request }}
+
+      {{ pipeline_directive }}
+
+      PIPELINE REPORT:
+      {{ steps.final-report.summary }}
+
+      ALL PHASE OUTPUTS:
+      REQUIREMENTS: {{ steps.dispatch-requirements.summary }}
+      ARCHITECTURE: {{ steps.dispatch-architecture.summary }}
+      IMPLEMENTATION: {{ steps.dispatch-implementation.summary }}
+      REVIEW: {{ steps.dispatch-review.summary }}
+      FIX: {{ steps.dispatch-fix.summary }}
+      QA: {{ steps.dispatch-qa.summary }}
+
+      Analyze pipeline performance per your AGENTS.md instructions.
+      Write retrospective to {{ repo_path }}/docs/retrospectives/$(date +%Y-%m-%d)-{{ branch }}.md
+
+hooks:
+  onSuccess:
+    - run: echo "[pipeline-orchestrator] ✅ SDLC pipeline completed for {{ repo_name }} on branch {{ branch }}. Feature: {{ feature_request }}"
+    - run: echo "[pipeline-orchestrator] All 7 sub-workflows executed. Check {{ repo_path }}/docs/pipeline-report-$(date +%Y-%m-%d).md for full report."
+  onFailure:
+    - run: echo "[pipeline-orchestrator] ❌ SDLC pipeline FAILED for {{ repo_name }} on branch {{ branch }}. Feature: {{ feature_request }}"
+    - run: echo "[pipeline-orchestrator] Failed at step: ${FAILED_STEP:-unknown}. Check logs for details."

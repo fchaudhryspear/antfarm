@@ -1,23 +1,54 @@
+# DEPRECATED: Use pipeline-orchestrator which chains swarm-requirements-v1 →
+# swarm-architecture-v1 → swarm-implement-v1 → swarm-code-review-v3 →
+# swarm-code-fix-v1 → swarm-qa-v1 → swarm-release-v1
+# This workflow is retained for backward compatibility only.
+deprecated: true
+
 # Ralph loop (https://github.com/snarktank/ralph) — each agent runs in a fresh
 # session with clean context. Memory persists via git history and progress files.
 id: feature-dev
 name: Feature Development Workflow
-version: 5
+version: 6
 description: |
-  Story-based execution pipeline. Planner decomposes tasks into user stories.
-  Setup prepares the environment and establishes baseline.
-  Developer implements each story (with tests) in a fresh session. Verifier checks each story.
-  Then integration/E2E testing, PR creation, and code review.
+  Story-based execution pipeline with intelligent agent routing and automated quality gates.
+  Planner decomposes tasks into user stories (Orion_Architect).
+  Setup prepares environment (NexDev). 
+  Developer implements stories (Simon_Backend).
+  Verifier validates with TDD (Lana_QA).
+  Tester validates data/infrastructure (Tracy).
+  Reviewer ensures code quality (Ross_Mentor/Reviewer).
+  Includes automated security audits and UX validation (Aria_UI/UX).
+  
+  # Workflow Intelligence Tags
+  tags:
+    - feature-development
+    - user-stories
+    - tdd
+    - code-review
+    - ux-design
+    - security-validation
+  # Recommended for:
+  recommended_when:
+    - task_contains: ["feature", "enhancement", "new functionality", "ui", "frontend", "backend"]
+    - avoids: ["bug", "defect", "error", "fix", "security", "vulnerability"]
+    - complexity: ["medium", "high"]
+    - estimated_stories: [3, 20]
 
 polling:
-  model: default
-  timeoutSeconds: 120
+  model: ollama-cloud/kimi-k2.5:cloud
+  timeoutSeconds: 180
+  prefer_local: true
+  local_models:
+    analysis: mb_mixtral-16k
+    routing: mb_qwen2.5-72b
+    execution: mb_qwen2.5-coder-32b
+    reporting: mb_command-r-16k
 
 agents:
   - id: planner
     name: Planner
     role: analysis
-    description: Decomposes tasks into ordered user stories.
+    description: Decomposes tasks into ordered user stories. (Led by Orion_Architect - maps out high-level architecture, API contracts, database schemas, and system workflows)
     workspace:
       baseDir: agents/planner
       files:
@@ -28,18 +59,18 @@ agents:
   - id: setup
     name: Setup
     role: coding
-    description: Prepares environment, creates branch, establishes baseline.
+    description: Prepares environment, creates branch, establishes baseline. (Led by NexDev - Mission Control & Deployment for CI/CD, managing plugin integrations, and environment orchestration)
     workspace:
       baseDir: agents/setup
       files:
-        AGENTS.md: ../../agents/shared/setup/AGENTS.md
-        SOUL.md: ../../agents/shared/setup/SOUL.md
-        IDENTITY.md: ../../agents/shared/setup/IDENTITY.md
+        AGENTS.md: agents/setup/AGENTS.md
+        SOUL.md: agents/setup/SOUL.md
+        IDENTITY.md: agents/setup/IDENTITY.md
 
   - id: developer
     name: Developer
     role: coding
-    description: Implements features, writes tests, creates PRs.
+    description: Implements features, writes tests, creates PRs. (Led by Simon_Backend - writes heavy-duty server-side logic in Python and Node.js including API routes, database interactions, and has access to AWS Q Developer and Snowflake Cortex for cloud-assisted development)
     workspace:
       baseDir: agents/developer
       files:
@@ -50,20 +81,18 @@ agents:
   - id: verifier
     name: Verifier
     role: verification
-    description: Quick sanity check - did developer actually do the work?
+    description: Quick sanity check - did developer actually do the work? (Led by Lana_QA - The Testing Engine who writes and executes unit/integration tests using TDD to actively break code and ensure robustness)
     workspace:
       baseDir: agents/verifier
-      skills:
-        - agent-browser
       files:
-        AGENTS.md: ../../agents/shared/verifier/AGENTS.md
-        SOUL.md: ../../agents/shared/verifier/SOUL.md
-        IDENTITY.md: ../../agents/shared/verifier/IDENTITY.md
+        AGENTS.md: agents/verifier/AGENTS.md
+        SOUL.md: agents/verifier/SOUL.md
+        IDENTITY.md: agents/verifier/IDENTITY.md
 
   - id: tester
     name: Tester
     role: testing
-    description: Integration and E2E testing after all stories are implemented.
+    description: Integration and E2E testing after all stories are implemented. (Led by Tracy - Data Analyst for data validation and metrics)
     workspace:
       baseDir: agents/tester
       files:
@@ -74,11 +103,9 @@ agents:
   - id: reviewer
     name: Reviewer
     role: analysis
-    description: Reviews PRs, requests changes or approves.
+    description: Reviews PRs, requests changes or approves. (Led by Ross_Mentor/Reviewer - Code Gatekeeper who analyzes code generated by Simon and Leo, enforces best practices, checks for optimization opportunities, and kicks back code that doesn't meet quality standards)
     workspace:
       baseDir: agents/reviewer
-      skills:
-        - agent-browser
       files:
         AGENTS.md: agents/reviewer/AGENTS.md
         SOUL.md: agents/reviewer/SOUL.md
@@ -107,7 +134,7 @@ steps:
       STATUS: done
       REPO: /path/to/repo
       BRANCH: feature-branch-name
-      STORIES_JSON: [ ... array of story objects ... ]
+      stories_json: [ ... array of story objects ... ]
     expects: "STATUS: done"
     max_retries: 2
     on_fail:
@@ -121,8 +148,8 @@ steps:
       TASK:
       {{task}}
 
-      REPO: {{repo}}
-      BRANCH: {{branch}}
+      REPO: {{REPO}}
+      BRANCH: {{BRANCH}}
 
       Instructions:
       1. cd into the repo
@@ -159,8 +186,8 @@ steps:
       TASK (overall):
       {{task}}
 
-      REPO: {{repo}}
-      BRANCH: {{branch}}
+      REPO: {{REPO}}
+      BRANCH: {{BRANCH}}
       BUILD_CMD: {{build_cmd}}
       TEST_CMD: {{test_cmd}}
 
@@ -206,8 +233,8 @@ steps:
       TASK (overall):
       {{task}}
 
-      REPO: {{repo}}
-      BRANCH: {{branch}}
+      REPO: {{REPO}}
+      BRANCH: {{BRANCH}}
       CHANGES: {{changes}}
       TEST_CMD: {{test_cmd}}
 
@@ -229,18 +256,20 @@ steps:
       Has frontend changes: {{has_frontend_changes}}
 
       If {{has_frontend_changes}} is 'true', you MUST also perform visual verification:
-      1. Use the agent-browser skill to visually inspect the changed UI
-      2. Open the changed HTML file directly (file:// URL) or spin up a local dev server if the project requires one
-      3. Take a screenshot of the rendered page
-      4. Visually confirm:
+      1. Consult with Aria_UI/UX (Experience & Flow Architect) who defines the visual language, accessibility standards, and user journey
+      2. Aria_UI/UX creates the design logic and UI blueprints that frontend implementation should follow
+      3. Use the agent-browser skill to visually inspect the changed UI against Aria's design specifications
+      4. Open the changed HTML file directly (file:// URL) or spin up a local dev server if the project requires one
+      5. Take a screenshot of the rendered page
+      6. Visually confirm:
          - Layout renders correctly (no broken/overlapping elements)
-         - Styling is applied as expected (colors, fonts, spacing)
+         - Styling is applied as expected (colors, fonts, spacing per Aria's design specifications)
          - All visible elements from the story are present and properly positioned
          - No missing images, icons, or visual assets
          - Text is readable and not clipped or hidden
-      5. A visual PASS means: the page renders without broken layout, missing elements, or overlapping content
-      6. A visual FAIL means: broken layout, missing/invisible elements, overlapping or misaligned content, unstyled raw HTML, or obvious rendering errors
-      7. Include your visual findings in VERIFIED output
+      7. A visual PASS means: the page renders without broken layout, missing elements, or overlapping content and matches Aria's design specifications
+      8. A visual FAIL means: broken layout, missing/invisible elements, overlapping or misaligned content, unstyled raw HTML, or obvious rendering errors or deviation from Aria's design
+      9. Include your visual findings and comparison to Aria's design specs in VERIFIED output
 
       If {{has_frontend_changes}} is 'false', skip visual verification entirely.
 
@@ -267,8 +296,8 @@ steps:
       TASK:
       {{task}}
 
-      REPO: {{repo}}
-      BRANCH: {{branch}}
+      REPO: {{REPO}}
+      BRANCH: {{BRANCH}}
       CHANGES: {{changes}}
       BUILD_CMD: {{build_cmd}}
       TEST_CMD: {{test_cmd}}
@@ -306,10 +335,10 @@ steps:
       TASK:
       {{task}}
 
-      REPO: {{repo}}
-      BRANCH: {{branch}}
+      REPO: {{REPO}}
+      BRANCH: {{BRANCH}}
       CHANGES: {{changes}}
-      RESULTS: {{results}}
+      RESULTS: {{RESULTS}}
 
       PROGRESS LOG:
       {{progress}}
@@ -356,7 +385,7 @@ steps:
       Has frontend changes: {{has_frontend_changes}}
 
       If {{has_frontend_changes}} is 'true', you MUST also perform a visual design review:
-      1. Check out the branch: git checkout {{branch}}
+      1. Check out the branch: git checkout {{BRANCH}}
       2. Use the agent-browser skill to open the changed page (file:// URL or local dev server)
       3. Take a screenshot of the rendered page
       4. Evaluate visual polish and design quality:
@@ -387,3 +416,22 @@ steps:
       max_retries: 3
       on_exhausted:
         escalate_to: human
+
+hooks:
+  onSuccess:
+    - type: log
+      message: "Feature development workflow completed successfully"
+    - type: notify
+      message: |
+        ✅ Feature development completed!
+        Stories implemented: {{github.event.inputs.stories_count | default: 'unknown'}}
+        PR: {{steps.pr.outputs.pr}}
+        
+  onFailure:
+    - type: log
+      message: "Feature development workflow failed"
+    - type: notify
+      message: |
+        ❌ Feature development failed
+        Error: {{ error }}
+        Failed at step: {{ failed_step | default: 'unknown' }}

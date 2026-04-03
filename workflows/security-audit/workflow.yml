@@ -1,99 +1,157 @@
 # Ralph loop (https://github.com/snarktank/ralph) — fresh context per agent session
 id: security-audit
 name: Security Audit & Fix
-version: 1
+version: 2
 description: |
-  Security vulnerability scanning and remediation pipeline.
-  Scanner explores the codebase for vulnerabilities. Prioritizer ranks and groups findings.
-  Setup creates the security branch. Fixer implements each fix with regression tests.
-  Verifier confirms each fix. Tester runs final integration validation. PR agent creates the pull request.
+  Security vulnerability scanning and remediation pipeline with intelligent agent routing.
+  Scanner explores codebase for vulnerabilities (Atlas_Security - infrastructure sentinel).
+  Prioritizer ranks and groups findings (Phil_Data&AIOps - data/routing analysis).
+  Setup creates security branch (NexDev - deployment orchestration).
+  Fixer implements fixes with regression tests (Simon_Backend - security implementation).
+  Verifier confirms each fix is correct (Lana_QA - testing engine).
+  Tester runs final integration validation (Tracy - data validation).
+  PR agent creates pull request (Ross_Mentor/Reviewer - code gating).
+  
+  # Workflow Intelligence Tags
+  tags:
+    - security-scanning
+    - vulnerability-management
+    - compliance-verification
+    - secure-development
+    - risk-assessment
+  # Recommended for:
+  recommended_when:
+    - task_contains: ["security", "vulnerability", "audit", "scan", "penetration", "auth", "crypto", "compliance", "regulation"]
+    - avoids: ["feature", "enhancement", "ui", "ux", "design", "performance", "optimization"]
+    - severity: ["critical", "high", "medium", "low"]
+    - estimated_vulnerabilities: [0, 50]
+    - compliance_frameworks: ["SOC2", "HIPAA", "GDDR", "PCI-DSS", "ISO27001"]
+  # Agent Specialization Mapping:
+    # scanner: Atlas_Security (infrastructure vulnerability scanning)
+    # prioritizer: Phil_Data&AIOps (data analysis & finding prioritization)
+    # setup: NexDev (secure deployment & environment setup)
+    # fixer: Simon_Backend (security fix implementation in backend)
+    # verifier: Lana_QA (security verification & testing)
+    # tester: Tracy (data validation & audit metrics)
+    # pr: Ross_Mentor/Reviewer (security PR review & quality gating)
+acceptance_criteria:
+  - "Scanner identifies vulnerabilities with file/line references from actual code"
+  - "Prioritizer deduplicates and ranks findings — max {{ max_findings }} fixes"
+  - "All fixes include regression tests proving the vulnerability is patched"
+  - "Verifier checks bypass scenarios, not just the found payload"
+  - "Final integration test passes with no regressions"
+  - "PR includes before/after audit comparison"
+  - "No files modified in {{ exclude_patterns }}"
+
+context:
+  repo_path: ""          # REQUIRED: --repo-path=/path/to/repo
+  repo_name: ""          # REQUIRED: --context repo_name=my-project
+  branch: "security-audit/auto"
+  build_cmd: "npm run build 2>/dev/null || python -m py_compile **/*.py 2>/dev/null || true"
+  test_cmd: "npm test --passWithNoTests 2>/dev/null || pytest -x -q 2>/dev/null || true"
+  exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
+  max_findings: "20"     # Max findings from scanner
+  priority: "all"        # all | high-and-above | critical-only
+
+global_error_policy: "escalate_to_human"
 
 polling:
-  model: default
-  timeoutSeconds: 120
+  model: ollama-cloud/glm-5:cloud
+  timeoutSeconds: 5400
 
 agents:
   - id: scanner
     name: Scanner
     role: scanning
-    description: Explores codebase and runs comprehensive security analysis.
+    model: ollama-cloud/glm-5:cloud
+    description: Explores codebase and runs comprehensive security analysis. (Led by Atlas_Security - Infrastructure Sentinel who actively audits codebase and infrastructure for vulnerabilities, scans for exposed API keys, audits notification routes, and ensures secure credential management across the workspace)
     workspace:
-      baseDir: agents/scanner
+      baseDir: agents/atlas
       files:
-        AGENTS.md: agents/scanner/AGENTS.md
-        SOUL.md: agents/scanner/SOUL.md
-        IDENTITY.md: agents/scanner/IDENTITY.md
+        AGENTS.md: agents/atlas/AGENTS.md
+        SOUL.md: agents/atlas/SOUL.md
+        IDENTITY.md: agents/atlas/IDENTITY.md
 
   - id: prioritizer
     name: Prioritizer
     role: analysis
-    description: Deduplicates, ranks, and groups findings into a fix plan.
+    model: ollama-cloud/glm-5:cloud
+    description: Deduplicates, ranks, and groups findings into a fix plan. (Led by Phil_Data&AIOps - Data & Model Routing Specialist who manages data pipelines and AI infrastructure, including optimizing how the swarm routes prompts to different LLMs based on cost and capability - useful for analyzing and prioritizing security findings)
     workspace:
-      baseDir: agents/prioritizer
+      baseDir: agents/phil
       files:
-        AGENTS.md: agents/prioritizer/AGENTS.md
-        SOUL.md: agents/prioritizer/SOUL.md
-        IDENTITY.md: agents/prioritizer/IDENTITY.md
+        AGENTS.md: agents/phil/AGENTS.md
+        SOUL.md: agents/phil/SOUL.md
+        IDENTITY.md: agents/phil/IDENTITY.md
 
   - id: setup
     name: Setup
     role: coding
-    description: Creates security branch and establishes baseline.
+    model: ollama-cloud/kimi-k2.5:cloud
+    description: Creates security branch and establishes baseline. (Led by NexDev - Mission Control & Deployment responsible for CI/CD pipelines, managing plugin integrations, and ensuring the OpenClaw environment successfully deploys code including security patches)
     workspace:
-      baseDir: agents/setup
+      baseDir: agents/nexdev
       files:
-        AGENTS.md: ../../agents/shared/setup/AGENTS.md
-        SOUL.md: ../../agents/shared/setup/SOUL.md
-        IDENTITY.md: ../../agents/shared/setup/IDENTITY.md
+        AGENTS.md: agents/nexdev/AGENTS.md
+        SOUL.md: agents/nexdev/SOUL.md
+        IDENTITY.md: agents/nexdev/IDENTITY.md
 
   - id: fixer
     name: Fixer
     role: coding
-    description: Implements security fixes one at a time with regression tests.
+    model: ollama-cloud/kimi-k2.5:cloud
+    description: Implements security fixes one at a time with regression tests. (Led by Simon_Backend - Engine Room who writes heavy-duty server-side logic in Python and Node.js including API routes, database interactions, and core business logic - ideal for implementing security fixes in backend systems, and has access to AWS Q Developer and Snowflake Cortex for cloud-assisted security analysis and development)
     workspace:
-      baseDir: agents/fixer
+      baseDir: agents/simon
       files:
-        AGENTS.md: agents/fixer/AGENTS.md
-        SOUL.md: agents/fixer/SOUL.md
-        IDENTITY.md: agents/fixer/IDENTITY.md
+        AGENTS.md: agents/simon/AGENTS.md
+        SOUL.md: agents/simon/SOUL.md
+        IDENTITY.md: agents/simon/IDENTITY.md
 
   - id: verifier
     name: Verifier
     role: verification
-    description: Verifies each fix is correct and the vulnerability is patched.
+    model: ollama-cloud/glm-5:cloud
+    description: Verifies each fix is correct and the vulnerability is patched. (Led by Lana_QA - The Testing Engine who writes and executes unit and integration tests, actively trying to break code to ensure it's robust before it gets sent to review - essential for verifying security fixes are properly implemented)
     workspace:
-      baseDir: agents/verifier
+      baseDir: agents/lana
       files:
-        AGENTS.md: ../../agents/shared/verifier/AGENTS.md
-        SOUL.md: ../../agents/shared/verifier/SOUL.md
-        IDENTITY.md: ../../agents/shared/verifier/IDENTITY.md
+        AGENTS.md: agents/lana/AGENTS.md
+        SOUL.md: agents/lana/SOUL.md
+        IDENTITY.md: agents/lana/IDENTITY.md
 
   - id: tester
     name: Tester
     role: testing
-    description: Final integration testing and audit re-run after all fixes.
+    model: ollama-cloud/kimi-k2.5:cloud
+    description: Final integration testing and audit re-run after all fixes. (Led by Tracy - Data Analyst for data validation, metrics, and performance tracking - useful for validating data security and measuring audit outcomes)
     workspace:
-      baseDir: agents/tester
+      baseDir: agents/tracy
       files:
-        AGENTS.md: agents/tester/AGENTS.md
-        SOUL.md: agents/tester/SOUL.md
-        IDENTITY.md: agents/tester/IDENTITY.md
+        AGENTS.md: agents/tracy/AGENTS.md
+        SOUL.md: agents/tracy/SOUL.md
+        IDENTITY.md: agents/tracy/IDENTITY.md
 
   - id: pr
     name: PR Creator
     role: pr
-    description: Creates a pull request summarizing the security audit and fixes.
+    model: ollama-cloud/minimax-m2.7:cloud
+    description: Creates a pull request summarizing the security audit and fixes. (Led by Ross_Mentor/Reviewer - Code Gatekeeper who acts as the senior engineer reviewing pull requests, analyzes code generated by Simon and Leo, enforces best practices, checks for optimization opportunities, and kicks back code that doesn't meet quality standards - essential for reviewing security fix PRs)
     workspace:
-      baseDir: agents/pr
+      baseDir: agents/ross
       files:
-        AGENTS.md: ../../agents/shared/pr/AGENTS.md
-        SOUL.md: ../../agents/shared/pr/SOUL.md
-        IDENTITY.md: ../../agents/shared/pr/IDENTITY.md
+        AGENTS.md: agents/ross/AGENTS.md
+        SOUL.md: agents/ross/SOUL.md
+        IDENTITY.md: agents/ross/IDENTITY.md
 
 steps:
   - id: scan
     agent: scanner
+    timeoutSeconds: 3600
     input: |
+      EXCLUDE: {{ exclude_patterns }}
+      MAX_FINDINGS: {{ max_findings }}
+
       Perform a comprehensive security audit of the codebase.
 
       TASK:
@@ -118,13 +176,16 @@ steps:
       6. Review auth/session handling (token expiry, session fixation, cookie flags)
       7. Check security headers (CORS, CSP, HSTS, X-Frame-Options)
       8. Document every finding with severity, file, line, and description
+      9. Report a maximum of {{ max_findings }} findings, prioritized by severity.
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
 
       Reply with:
       STATUS: done
-      REPO: /path/to/repo
-      BRANCH: security-audit-YYYY-MM-DD
-      VULNERABILITY_COUNT: <number>
-      FINDINGS: <detailed list of each vulnerability>
+      repo: /path/to/repo
+      branch: security-audit-YYYY-MM-DD
+      vulnerability_count: <number>
+      findings: <detailed list of each vulnerability>
     expects: "STATUS: done"
     max_retries: 2
     on_fail:
@@ -132,15 +193,16 @@ steps:
 
   - id: prioritize
     agent: prioritizer
+    timeoutSeconds: 1800
     input: |
       Prioritize and group the security findings into a fix plan.
 
       TASK:
       {{task}}
 
-      REPO: {{repo}}
-      VULNERABILITY_COUNT: {{vulnerability_count}}
-      FINDINGS: {{findings}}
+      REPO: {{repo | default: "unknown"}}
+      VULNERABILITY_COUNT: {{vulnerability_count | default: "0"}}
+      FINDINGS: {{findings | default: "None"}}
 
       Instructions:
       1. Deduplicate findings (same root cause = one fix)
@@ -164,6 +226,8 @@ steps:
       HIGH_COUNT: <number>
       DEFERRED: <any issues skipped and why>
       STORIES_JSON: [ ... array of story objects ... ]
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
     expects: "STATUS: done"
     max_retries: 2
     on_fail:
@@ -171,24 +235,27 @@ steps:
 
   - id: setup
     agent: setup
+    timeoutSeconds: 600
     input: |
       Prepare the environment for security fixes.
 
-      REPO: {{repo}}
-      BRANCH: {{branch}}
+      REPO: {{repo | default: "unknown"}}
+      BRANCH: {{branch | default: "security-audit"}}
 
       Instructions:
       1. cd into the repo
-      2. Create the security branch (git checkout -b {{branch}} from main)
+      2. Create the security branch (git checkout -b {{branch | default: "security-audit"}} from main)
       3. Read package.json, CI config, test config to understand build/test setup
       4. Run the build to establish a baseline
       5. Run the tests to establish a baseline
 
       Reply with:
       STATUS: done
-      BUILD_CMD: <build command>
-      TEST_CMD: <test command>
-      BASELINE: <baseline status>
+      BUILD_CMD: {{build_cmd | default: "npm run build"}}
+      TEST_CMD: {{test_cmd | default: "npm test"}}
+      BASELINE: {{baseline | default: "unknown"}}
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
     expects: "STATUS: done"
     max_retries: 2
     on_fail:
@@ -197,6 +264,7 @@ steps:
   - id: fix
     agent: fixer
     type: loop
+    timeoutSeconds: 3600
     loop:
       over: stories
       completion: all_done
@@ -209,34 +277,37 @@ steps:
       TASK (overall):
       {{task}}
 
-      REPO: {{repo}}
-      BRANCH: {{branch}}
-      BUILD_CMD: {{build_cmd}}
-      TEST_CMD: {{test_cmd}}
+      REPO: {{repo | default: "unknown"}}
+      BRANCH: {{branch | default: "security-audit"}}
+      BUILD_CMD: {{build_cmd | default: "npm run build"}}
+      TEST_CMD: {{test_cmd | default: "npm test"}}
 
       CURRENT STORY:
       {{current_story}}
 
       COMPLETED STORIES:
-      {{completed_stories}}
+      {{completed_stories | default: "None"}}
 
-      STORIES REMAINING: {{stories_remaining}}
+      STORIES REMAINING: {{stories_remaining | default: "unknown"}}
 
       VERIFY FEEDBACK (if retrying):
-      {{verify_feedback}}
+      {{verify_feedback | default: "None"}}
 
       PROGRESS LOG:
-      {{progress}}
+      {{progress | default: "None"}}
 
       Instructions:
       1. cd into the repo, pull latest on the branch
       2. Read the vulnerability description carefully
       3. Implement the fix — minimal, targeted changes only
       4. Write a regression test that verifies the vulnerability is patched
-      5. Run {{build_cmd}} to verify the build passes
-      6. Run {{test_cmd}} to verify all tests pass
+      5. Run {{build_cmd | default: "npm run build"}} to verify the build passes
+      6. Run {{test_cmd | default: "npm test"}} to verify all tests pass
       7. Commit: fix(security): brief description
       8. Rewrite progress-{{run_id}}.txt with updated story results and patterns
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
 
       Reply with:
       STATUS: done
@@ -249,14 +320,15 @@ steps:
 
   - id: verify
     agent: verifier
+    timeoutSeconds: 1800
     input: |
       Verify the security fix is correct and the vulnerability is patched.
 
-      REPO: {{repo}}
-      BRANCH: {{branch}}
-      TEST_CMD: {{test_cmd}}
-      CHANGES: {{changes}}
-      REGRESSION_TEST: {{regression_test}}
+      REPO: {{repo | default: "unknown"}}
+      BRANCH: {{branch | default: "security-audit"}}
+      TEST_CMD: {{test_cmd | default: "npm test"}}
+      CHANGES: {{changes | default: "See progress log"}}
+      REGRESSION_TEST: {{regression_test | default: "See progress log"}}
 
       CURRENT STORY:
       {{current_story}}
@@ -265,7 +337,7 @@ steps:
       {{progress}}
 
       Instructions:
-      1. Run the full test suite with {{test_cmd}}
+      1. Run the full test suite with {{test_cmd | default: "npm test"}}
       2. Confirm the regression test exists and tests the right thing
       3. Review the fix — does it actually address the vulnerability?
       4. Check for unintended side effects
@@ -278,6 +350,8 @@ steps:
       - Auth bypass: Does it cover all HTTP methods (GET, POST, PUT, DELETE)?
       - CSRF: Does it validate the token server-side?
       - If the fix only blocks one payload variant, it's insufficient — STATUS: retry
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
 
       Reply with:
       STATUS: done
@@ -296,25 +370,26 @@ steps:
 
   - id: test
     agent: tester
+    timeoutSeconds: 1800
     input: |
       Final integration testing after all security fixes.
 
       TASK:
       {{task}}
 
-      REPO: {{repo}}
-      BRANCH: {{branch}}
-      BUILD_CMD: {{build_cmd}}
-      TEST_CMD: {{test_cmd}}
-      CHANGES: {{changes}}
-      VULNERABILITY_COUNT: {{vulnerability_count}}
+      REPO: {{repo | default: "unknown"}}
+      BRANCH: {{branch | default: "security-audit"}}
+      BUILD_CMD: {{build_cmd | default: "npm run build"}}
+      TEST_CMD: {{test_cmd | default: "npm test"}}
+      CHANGES: {{changes | default: "See progress log"}}
+      VULNERABILITY_COUNT: {{vulnerability_count | default: "0"}}
 
       PROGRESS LOG:
-      {{progress}}
+      {{progress | default: "None"}}
 
       Instructions:
-      1. Run the full test suite ({{test_cmd}}) — all tests must pass
-      2. Run the build ({{build_cmd}}) — must succeed
+      1. Run the full test suite ({{test_cmd | default: "npm test"}}) — all tests must pass
+      2. Run the build ({{build_cmd | default: "npm run build"}}) — must succeed
       3. Run `npm audit` (or equivalent) again — compare before/after
       4. Quick smoke test: does the app still start and work?
       5. Verify no regressions from the security fixes
@@ -329,6 +404,8 @@ steps:
       STATUS: retry
       FAILURES:
       - What's broken
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
     expects: "STATUS: done"
     on_fail:
       retry_step: fix
@@ -338,23 +415,24 @@ steps:
 
   - id: pr
     agent: pr
+    timeoutSeconds: 600
     input: |
       Create a pull request for the security fixes.
 
-      REPO: {{repo}}
-      BRANCH: {{branch}}
-      VULNERABILITY_COUNT: {{vulnerability_count}}
-      FINDINGS: {{findings}}
-      FIX_PLAN: {{fix_plan}}
-      CRITICAL_COUNT: {{critical_count}}
-      HIGH_COUNT: {{high_count}}
-      DEFERRED: {{deferred}}
-      CHANGES: {{changes}}
-      RESULTS: {{results}}
-      AUDIT_AFTER: {{audit_after}}
+      REPO: {{repo | default: "unknown"}}
+      BRANCH: {{branch | default: "security-audit"}}
+      VULNERABILITY_COUNT: {{vulnerability_count | default: "0"}}
+      FINDINGS: {{findings | default: "None"}}
+      FIX_PLAN: {{fix_plan | default: "See progress log"}}
+      CRITICAL_COUNT: {{critical_count | default: "0"}}
+      HIGH_COUNT: {{high_count | default: "0"}}
+      DEFERRED: {{deferred | default: "None"}}
+      CHANGES: {{changes | default: "See progress log"}}
+      RESULTS: {{results | default: "See progress log"}}
+      AUDIT_AFTER: {{audit_after | default: "None"}}
 
       PROGRESS LOG:
-      {{progress}}
+      {{progress | default: "None"}}
 
       PR title format: fix(security): audit and remediation YYYY-MM-DD
 
@@ -363,7 +441,7 @@ steps:
       ## Security Audit Summary
 
       **Scan Date**: YYYY-MM-DD
-      **Vulnerabilities Found**: {{vulnerability_count}} ({{critical_count}} critical, {{high_count}} high)
+      **Vulnerabilities Found**: {{vulnerability_count | default: "0"}} ({{critical_count | default: "0"}} critical, {{high_count | default: "0"}} high)
       **Vulnerabilities Fixed**: <count from changes>
       **Vulnerabilities Deferred**: <count from deferred>
 
@@ -371,22 +449,24 @@ steps:
 
       | # | Severity | Description | Files |
       |---|----------|-------------|-------|
-      (list each fix from {{changes}})
+      (list each fix from {{changes | default: "See progress log"}})
 
       ## Deferred Items
-      {{deferred}}
+      {{deferred | default: "None"}}
 
       ## Regression Tests Added
       (list from progress log)
 
       ## Audit Comparison
       **Before**: <from findings>
-      **After**: {{audit_after}}
+      **After**: {{audit_after | default: "None"}}
       ```
 
       Label: security
 
       Use: gh pr create
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
 
       Reply with:
       STATUS: done
@@ -394,3 +474,24 @@ steps:
     expects: "STATUS: done"
     on_fail:
       escalate_to: human
+
+hooks:
+  onSuccess:
+    - type: log
+      message: "Security audit workflow completed successfully"
+    - type: notify
+      message: |
+        ✅ Security audit completed!
+        Vulnerabilities found: {{vulnerability_count | default: "0"}}
+        Critical: {{critical_count | default: "0"}}
+        High: {{high_count | default: "0"}}
+        PR: {{steps.pr.outputs.pr}}
+        
+  onFailure:
+    - type: log
+      message: "Security audit workflow failed"
+    - type: notify
+      message: |
+        ❌ Security audit failed
+        Error: {{ error }}
+        Failed at step: {{ failed_step | default: 'unknown' }}

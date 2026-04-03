@@ -1,0 +1,276 @@
+id: swarm-release-v1
+name: Release & Deployment Swarm v1.0
+version: 1.0
+workflow_objective: Deploy feature branch to staging, validate with smoke tests, generate release notes, and produce deployment readiness report.
+description: |
+  Phase 7 of the SDLC pipeline (after QA validation).
+  4 agents: deploy-staging → smoke-tester + release-notes (parallel) → release-compiler.
+
+  Handles deployment validation, smoke testing, changelog generation, and
+  deployment readiness assessment. Works with SAM, CDK, Docker, or custom deploy commands.
+
+  v1.0: Initial release — 4 agents, project-agnostic, bounded outputs.
+
+context:
+  repo_path: ""          # REQUIRED: --repo-path=/path/to/repo
+  repo_name: ""          # REQUIRED: --context repo_name=my-project
+  branch: ""             # REQUIRED: --context branch=feature/my-feature
+  staging_url: ""        # OPTIONAL: staging URL for smoke tests
+  deploy_cmd: ""         # OPTIONAL: custom deploy command (auto-detects if empty)
+  smoke_test_cmd: ""     # OPTIONAL: custom smoke test command
+  version: ""            # OPTIONAL: version tag (auto-generated from date if empty)
+  previous_version: ""   # OPTIONAL: for changelog diff
+  build_cmd: "npm run build 2>/dev/null || sam build 2>/dev/null || true"
+  test_cmd: "npm test --passWithNoTests 2>/dev/null || pytest -x -q 2>/dev/null || true"
+  exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
+  release_directive: "Work in {{ repo_path }} on branch {{ branch }}. Do NOT fabricate results. Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata. Exclude: {{ exclude_patterns }}."
+
+acceptance_criteria:
+  - "Staging deployment succeeds or failure is documented with root cause"
+  - "Smoke tests run against staging (or dry-run if no staging_url)"
+  - "Release notes generated from git log and PR descriptions"
+  - "Deployment readiness report written to repo"
+  - "No files modified in {{ exclude_patterns }} directories"
+  - "Version tag is consistent across all outputs"
+
+polling:
+  model: ollama-cloud/glm-5:cloud
+  timeoutSeconds: 5400
+
+agents:
+  - id: deploy-staging
+    name: Staging Deployer
+    role: deployment
+    workspace:
+      baseDir: agents/deploy-staging
+      files:
+        AGENTS.md: agents/deploy-staging/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+
+  - id: smoke-tester
+    name: Smoke Tester
+    role: testing
+    workspace:
+      baseDir: agents/smoke-tester
+      files:
+        AGENTS.md: agents/smoke-tester/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+
+  - id: release-notes
+    name: Release Notes Generator
+    role: documentation
+    workspace:
+      baseDir: agents/release-notes
+      files:
+        AGENTS.md: agents/release-notes/AGENTS.md
+    model: ollama-cloud/glm-5:cloud
+
+  - id: release-compiler
+    name: Release Compiler
+    role: consolidation
+    workspace:
+      baseDir: agents/release-compiler
+      files:
+        AGENTS.md: agents/release-compiler/AGENTS.md
+    model: ollama-cloud/glm-5:cloud
+
+steps:
+  - id: deploy
+    agent: deploy-staging
+    expects: 'DEPLOY_STATUS:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      STAGING_URL: {{ staging_url }}
+      DEPLOY_CMD: {{ deploy_cmd }}
+      BUILD_CMD: {{ build_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      {{ release_directive }}
+
+      STEP 1: cd {{ repo_path }} && git checkout {{ branch }}
+      STEP 2: Detect deployment method:
+        - If DEPLOY_CMD is provided, use it
+        - If template.yaml exists → SAM (sam build && sam deploy --no-confirm-changeset)
+        - If cdk.json exists → CDK (cdk deploy --require-approval never)
+        - If docker-compose.yml exists → Docker (docker-compose up -d)
+        - If Dockerfile exists → Docker build + tag
+        - Otherwise → dry-run: build only, report as "dry-run"
+      STEP 3: Run build: {{ build_cmd }}
+      STEP 4: If staging deployment is possible, deploy. Otherwise, perform dry-run validation:
+        - Verify build artifacts exist
+        - Verify configuration files are valid (JSON/YAML parse)
+        - Verify environment variable references exist
+      STEP 5: Report deployment status.
+
+      STOP after deployment attempt — do not retry deployment manually.
+
+      Output:
+        DEPLOY_STATUS: success | dry-run | failed
+        DEPLOY_METHOD: sam | cdk | docker | custom | dry-run
+        ARTIFACTS: [list of build artifacts produced]
+        DEPLOY_URL: <staging URL if deployed, or "N/A">
+        ERRORS: [list of errors if any]
+
+  - id: smoke
+    agent: smoke-tester
+    depends_on: [deploy]
+    expects: 'SMOKE_STATUS:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      STAGING_URL: {{ staging_url }}
+      SMOKE_TEST_CMD: {{ smoke_test_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      {{ release_directive }}
+
+      DEPLOY OUTPUT: {{ steps.deploy.summary }}
+
+      STEP 1: cd {{ repo_path }} && git checkout {{ branch }}
+      STEP 2: Determine test approach:
+        - If SMOKE_TEST_CMD provided, use it
+        - If STAGING_URL provided + DEPLOY_STATUS=success: run HTTP smoke tests
+        - If DEPLOY_STATUS=dry-run: run local integration tests as smoke tests
+      STEP 3: Run smoke tests (max 20 tests):
+        HTTP tests (if staging URL available):
+        - Health check endpoint (GET /)
+        - Auth flow (POST /auth with test credentials)
+        - Primary CRUD operations (GET /api/v1/*)
+        - Error handling (404, 400 responses)
+        - Rate limiting validation
+        Local tests (if no staging):
+        - Run {{ test_cmd }}
+        - Verify API handler imports work
+        - Check configuration validity
+      STEP 4: Report results.
+
+      STOP after running all smoke tests or reaching 20.
+
+      Output:
+        SMOKE_STATUS: pass | fail | partial | dry-run
+        TESTS_RUN: <n>
+        TESTS_PASSED: <n>
+        TESTS_FAILED: <n>
+        FAILURES: [array of {test_name, expected, actual, error}]
+
+  - id: changelog
+    agent: release-notes
+    depends_on: [deploy]
+    expects: 'RELEASE_NOTES_STATUS:'
+    timeoutSeconds: 2700
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      VERSION: {{ version }}
+      PREVIOUS_VERSION: {{ previous_version }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      {{ release_directive }}
+
+      STEP 1: cd {{ repo_path }} && git checkout {{ branch }}
+      STEP 2: Determine version:
+        - If VERSION provided, use it
+        - Otherwise, generate from date: v$(date +%Y.%m.%d)
+      STEP 3: Get git log:
+        - git log main..{{ branch }} --oneline --no-merges
+        - If PREVIOUS_VERSION provided: git log {{ previous_version }}..HEAD --oneline
+      STEP 4: Read merged PR descriptions if available:
+        - gh pr list --state merged --head {{ branch }} --json title,body 2>/dev/null
+      STEP 5: Generate structured release notes:
+        - Summary (1 paragraph, max 100 words)
+        - Features Added (from feat: commits)
+        - Bugs Fixed (from fix: commits)
+        - Breaking Changes (from BREAKING: or ! commits)
+        - Migration Steps (if breaking changes detected)
+        - Dependencies Updated (from chore: or deps: commits)
+      STEP 6: Write release notes:
+        - Append to {{ repo_path }}/CHANGELOG.md (prepend new version section)
+        - Write full notes to {{ repo_path }}/docs/releases/<version>.md
+      STEP 7: Commit: docs(release): add release notes for <version>
+
+      Maximum 50 commit entries processed. STOP after 50.
+
+      Output:
+        RELEASE_NOTES_STATUS: complete
+        VERSION: <version tag>
+        FEATURES_COUNT: <n>
+        FIXES_COUNT: <n>
+        BREAKING_CHANGES: <n>
+        CHANGELOG_PATH: <path to CHANGELOG.md>
+        RELEASE_NOTES_PATH: <path to docs/releases/<version>.md>
+
+  - id: compile-release
+    agent: release-compiler
+    depends_on:
+      - smoke
+      - changelog
+    expects: 'RELEASE_STATUS:'
+    timeoutSeconds: 2700
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      VERSION: {{ version }}
+
+      {{ release_directive }}
+
+      DEPLOY OUTPUT: {{ steps.deploy.summary }}
+      SMOKE OUTPUT: {{ steps.smoke.summary }}
+      RELEASE NOTES OUTPUT: {{ steps.changelog.summary }}
+
+      STEP 1: Compile all outputs into deployment readiness assessment.
+      STEP 2: Determine readiness:
+        - READY: deploy=success + smoke=pass + release notes=complete
+        - CONDITIONAL: deploy=dry-run + smoke=partial/pass + notes=complete (needs manual deploy)
+        - NOT_READY: any critical failures (deploy failed, smoke failures, missing notes)
+      STEP 3: List blocking issues (max 10).
+      STEP 4: Write deployment readiness report to {{ repo_path }}/docs/deployment-readiness-<version>.md
+      STEP 5: Include:
+        - Deployment status summary
+        - Smoke test results
+        - Release notes summary
+        - Pre-production checklist
+        - Rollback procedure
+      STEP 6: Commit: docs(release): add deployment readiness report for <version>
+
+      Output:
+        RELEASE_STATUS: complete
+        READINESS: READY | CONDITIONAL | NOT_READY
+        VERSION: <version>
+        DEPLOY_METHOD: <from deploy step>
+        SMOKE_PASS_RATE: <n/m>
+        BLOCKING_ISSUES: [list, max 10]
+        REPORT_PATH: <path to readiness report>
+
+hooks:
+  onSuccess:
+    - type: log
+      message: "Release swarm completed successfully"
+    - type: notify
+      message: |
+        Release swarm completed for {{ repo_name }}!
+        Readiness: {{ steps.compile-release.summary }}
+        Version: {{ version }}
+  onFailure:
+    - type: log
+      message: "Release swarm failed"
+    - type: notify
+      message: |
+        Release swarm failed for {{ repo_name }}
+        Error: {{ error }}
+        Failed at step: {{ failed_step }}

@@ -56,7 +56,7 @@ agents:
       baseDir: agents/system-architect
       files:
         AGENTS.md: agents/system-architect/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/kimi-k2.5:cloud
   - id: api-designer
     name: API Designer
     role: design
@@ -205,6 +205,9 @@ steps:
         OPENAPI_SPEC: <full OpenAPI 3.0 JSON>
         CONVENTION_NOTES: <how this follows or deviates from existing patterns>
 
+      NOTE: This agent may also run api-design-webhooks. These steps may run sequentially
+      and should not conflict. Keep CRUD endpoint design independent of webhook design.
+
   - id: api-design-webhooks
     agent: api-designer
     depends_on: [parse-prd]
@@ -235,6 +238,9 @@ steps:
         EVENT_HANDLERS: [array of {event_type, handler_name, actions: [], idempotent}]
         RETRY_STRATEGY: {max_attempts, backoff_multiplier, dead_letter_after}
         IDEMPOTENCY_APPROACH: <description>
+
+      NOTE: This agent may also run api-design-core. These steps may run sequentially
+      and should not conflict. Keep webhook design independent of CRUD endpoint design.
 
   - id: data-design
     agent: data-architect
@@ -342,6 +348,44 @@ steps:
           }
         }
 
+  - id: visual-design
+    agent: visual-designer
+    depends_on: [parse-prd]
+    expects: 'VISUAL_DESIGN:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: Create visual design specifications from PRD requirements.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      PRD_PATH: {{ prd_path }}
+
+      INTAKE_OUTPUT: {{ steps.parse-prd.summary }}
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: _build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git
+
+      STEP 1: Read {{ prd_path }} to understand UX flows and user stories.
+      STEP 2: cd into {{ repo_path }} and explore existing frontend for design patterns:
+        - Check for design tokens (colors, spacing, typography) in CSS/SCSS/theme files
+        - Identify component library or design system in use
+        - Note existing visual conventions
+      STEP 3: Produce:
+        a) Mermaid diagrams for each user flow (max 8 flows)
+        b) Text-based wireframe descriptions (ASCII art or structured text) for each screen
+        c) Design token recommendations based on existing code (colors, spacing, typography)
+        d) Component state specs for each component: loading, error, empty, success states
+      STEP 4: Output in required format.
+
+      Output MUST include:
+        VISUAL_DESIGN: complete
+        FLOW_DIAGRAM_COUNT: <n>
+        WIREFRAME_COUNT: <n>
+        DESIGN_TOKENS: {colors: [], spacing: [], typography: []}
+        USER_FLOW_DIAGRAMS: [array of {flow_name, mermaid_diagram}]
+        WIREFRAMES: [array of {screen_name, description, ascii_wireframe}]
+        COMPONENT_STATES: [array of {component, states: {loading, error, empty, success}}]
+
   - id: compile-architecture
     agent: arch-compiler
     depends_on:
@@ -351,6 +395,7 @@ steps:
       - data-design
       - frontend-design
       - devops-design
+      - visual-design
     expects: 'ARCH_STATUS:'
     timeoutSeconds: 5400
     input: |
@@ -366,10 +411,7 @@ steps:
       Data Architect: {{ steps.data-design.summary }}
       Frontend Architect: {{ steps.frontend-design.summary }}
       DevOps Architect: {{ steps.devops-design.summary }}
-      Visual Designer: STATUS=skipped (v1.0 — visual design deferred to v1.1)
-
-      NOTE: visual-design was skipped in this run. Mark SCREEN_COUNT as TBD and flag
-      visual design as a pending deliverable for v1.1.
+      Visual Designer: {{ steps.visual-design.summary }}
 
       STEP 1: Read {{ prd_path }} to understand requirements.
       STEP 2: Cross-validate outputs:
@@ -396,11 +438,10 @@ steps:
         ENDPOINT_COUNT: <n>
         SCHEMA_CHANGES_COUNT: <n>
         COMPONENT_COUNT: <n>
-        SCREEN_COUNT: TBD
+        SCREEN_COUNT: <n>
         IMPLEMENTATION_PHASES: <n>
         CROSS_DOMAIN_VALIDATIONS: [array of {check, status, notes}]
         GAPS_IDENTIFIED: [array of {type, description}]
-        PENDING_V1_1: [visual-design-pages, visual-design-components] if any
         IMPLEMENTATION_PLAN: {
           phases: [
             {phase: 1, name: "Foundation", tasks: [], depends_on: [], estimated_effort: ""},
@@ -436,3 +477,21 @@ steps:
           }
         }
         ARCHITECTURE_FILE_WRITTEN: <path>
+
+hooks:
+  onSuccess:
+    - type: log
+      message: "Architecture swarm completed successfully"
+    - type: notify
+      message: |
+        Architecture swarm completed for {{ repo_name }}!
+        ADRs: {{ steps.compile-architecture.summary }}
+        Task: {{ task }}
+  onFailure:
+    - type: log
+      message: "Architecture swarm failed"
+    - type: notify
+      message: |
+        Architecture swarm failed for {{ repo_name }}
+        Error: {{ error }}
+        Failed at step: {{ failed_step }}

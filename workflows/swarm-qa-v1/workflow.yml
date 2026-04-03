@@ -1,0 +1,277 @@
+id: swarm-qa-v1
+name: QA Validation Swarm v1.0
+version: 1.0
+workflow_objective: Validate that implementation meets PRD acceptance criteria, run E2E tests, load tests, and regression checks. Produce GO/NO-GO recommendation.
+description: |
+  Phase 5 of the SDLC pipeline. Takes implementation output and validates against PRD.
+  4 parallel validators feed into a qa-compiler that produces GO/NO-GO recommendation.
+
+  Flow: acceptance-validator, e2e-tester, load-tester, regression-checker (parallel)
+        → qa-compiler (consolidation)
+
+context:
+  repo_path: ""          # REQUIRED: --repo-path=/path/to/repo
+  repo_name: ""          # REQUIRED: --context repo_name=my-project
+  branch: ""             # REQUIRED: --context branch=feature/my-feature
+  prd_path: ""           # REQUIRED: --context prd_path=docs/prd/feature.json
+  arch_path: ""          # OPTIONAL: --context arch_path=docs/architecture/spec.json
+  build_cmd: "npm run build 2>/dev/null || python -m py_compile **/*.py 2>/dev/null || true"
+  test_cmd: "npm test --passWithNoTests 2>/dev/null || pytest -x -q 2>/dev/null || true"
+  baseline_test_count: "" # From implementation phase
+  exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
+
+acceptance_criteria:
+  - "Acceptance validator checks each PRD user story against implementation"
+  - "E2E tester writes and runs end-to-end tests for critical user flows"
+  - "Load tester generates and runs load test scripts for new endpoints"
+  - "Regression checker runs full test suite and compares to baseline"
+  - "QA compiler produces GO/NO-GO recommendation with evidence"
+  - "No test files created in {{ exclude_patterns }} directories"
+
+polling:
+  model: ollama-cloud/kimi-k2.5:cloud
+  timeoutSeconds: 7200
+
+agents:
+  - id: acceptance-validator
+    name: Acceptance Validator
+    role: validation
+    workspace:
+      baseDir: agents/acceptance-validator
+      files:
+        AGENTS.md: agents/acceptance-validator/AGENTS.md
+    model: ollama-cloud/glm-5:cloud
+
+  - id: e2e-tester
+    name: E2E Tester
+    role: testing
+    workspace:
+      baseDir: agents/e2e-tester
+      files:
+        AGENTS.md: agents/e2e-tester/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+
+  - id: load-tester
+    name: Load Tester
+    role: testing
+    workspace:
+      baseDir: agents/load-tester
+      files:
+        AGENTS.md: agents/load-tester/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+
+  - id: regression-checker
+    name: Regression Checker
+    role: testing
+    workspace:
+      baseDir: agents/regression-checker
+      files:
+        AGENTS.md: agents/regression-checker/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+
+  - id: qa-compiler
+    name: QA Compiler
+    role: consolidation
+    workspace:
+      baseDir: agents/qa-compiler
+      files:
+        AGENTS.md: agents/qa-compiler/AGENTS.md
+    model: ollama-cloud/glm-5:cloud
+
+steps:
+  - id: acceptance-check
+    agent: acceptance-validator
+    expects: 'ACCEPTANCE_RESULT:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: Validate implementation against PRD acceptance criteria.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      PRD_PATH: {{ prd_path }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
+
+      STEP 1: cd {{ repo_path }} && git checkout {{ branch }}
+      STEP 2: Read the PRD JSON at {{ prd_path }}
+      STEP 3: For each user story in the PRD:
+        a) Read the acceptance criteria
+        b) Find the corresponding implementation code
+        c) Check if each acceptance criterion is met
+        d) Note any criteria that are NOT met with specific file/line references
+      STEP 4: Output results (max 20 user stories checked)
+
+      STOP after checking all stories or 20, whichever is fewer.
+
+      Output:
+        ACCEPTANCE_RESULT: complete
+        STORIES_CHECKED: <n>
+        STORIES_PASSING: <n>
+        STORIES_FAILING: <n>
+        DETAILS: [array of {story_id, title, criteria_met: n/total, failing_criteria: []}]
+
+  - id: e2e-test
+    agent: e2e-tester
+    expects: 'E2E_RESULT:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: Write and run E2E tests for the implementation.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      PRD_PATH: {{ prd_path }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
+
+      STEP 1: cd {{ repo_path }} && git checkout {{ branch }}
+      STEP 2: Read {{ prd_path }} to understand critical user flows
+      STEP 3: Detect test framework (Playwright, Cypress, pytest, Jest)
+      STEP 4: Write E2E tests for critical flows:
+        - For frontend: Playwright or Cypress tests
+        - For backend APIs: integration tests using the test framework
+        - Cover happy path + key error paths
+      STEP 5: Run the E2E tests
+      STEP 6: Commit test files: test(e2e): add E2E tests for <feature>
+
+      Maximum 10 E2E test files. STOP after writing 10.
+
+      Output:
+        E2E_RESULT: complete
+        E2E_TESTS_WRITTEN: <n>
+        E2E_TESTS_PASSED: <n>
+        E2E_TESTS_FAILED: <n>
+        FAILURES: [list of failures if any]
+
+  - id: load-test
+    agent: load-tester
+    expects: 'LOAD_RESULT:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: Write and run load test scripts for new endpoints.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      ARCH_PATH: {{ arch_path }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
+
+      STEP 1: cd {{ repo_path }} && git checkout {{ branch }}
+      STEP 2: If arch_path is provided, read it to find new API endpoints
+        Otherwise, scan for new route handler files on the branch
+      STEP 3: Write k6 or artillery load test scripts for new endpoints (max 5 scripts)
+      STEP 4: Run load tests against localhost/staging if available
+        If no server is running, validate scripts parse correctly
+      STEP 5: Commit test scripts: test(load): add load tests for <feature>
+
+      STOP after 5 load test scripts.
+
+      Output:
+        LOAD_RESULT: complete
+        LOAD_SCRIPTS_WRITTEN: <n>
+        LOAD_TEST_RESULTS: [array of {endpoint, rps, p99_ms, error_rate} or "not-run" if no server]
+
+  - id: regression-check
+    agent: regression-checker
+    expects: 'REGRESSION_RESULT:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: Run full test suite and check for regressions.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      BASELINE_TEST_COUNT: {{ baseline_test_count }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: {{ exclude_patterns }}
+
+      STEP 1: cd {{ repo_path }} && git checkout {{ branch }}
+      STEP 2: Run {{ build_cmd }} — report build status
+      STEP 3: Run {{ test_cmd }} — capture test results
+      STEP 4: Compare current test count to BASELINE_TEST_COUNT
+        - If tests decreased, flag as regression
+        - If tests increased, note new tests added
+      STEP 5: Check for flaky tests (run twice if suspicious)
+
+      Output:
+        REGRESSION_RESULT: complete
+        BUILD_STATUS: pass | fail
+        TOTAL_TESTS: <n>
+        TESTS_PASSED: <n>
+        TESTS_FAILED: <n>
+        BASELINE_COMPARISON: +N new | -N missing | same
+        REGRESSION_STATUS: clean | regressions-found
+        REGRESSIONS: [list if any]
+
+  - id: qa-compile
+    agent: qa-compiler
+    depends_on:
+      - acceptance-check
+      - e2e-test
+      - load-test
+      - regression-check
+    expects: 'QA_STATUS:'
+    timeoutSeconds: 2700
+    max_retries: 2
+    input: |
+      TASK: Consolidate all QA results and produce GO/NO-GO recommendation.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+
+      QA RESULTS:
+      Acceptance Validator: {{ steps.acceptance-check.summary }}
+      E2E Tester: {{ steps.e2e-test.summary }}
+      Load Tester: {{ steps.load-test.summary }}
+      Regression Checker: {{ steps.regression-check.summary }}
+
+      DECISION CRITERIA:
+      - GO: All acceptance criteria met, E2E tests pass, no regressions, load tests acceptable
+      - NO-GO: Any acceptance criteria failed, E2E failures, regressions found
+      - CONDITIONAL: Minor issues that can be addressed post-merge (non-blocking)
+
+      Maximum 10 blocking issues in report. STOP listing after 10.
+
+      Output:
+        QA_STATUS: pass | fail | partial
+        ACCEPTANCE_COVERAGE: X/Y criteria met
+        E2E_TESTS_WRITTEN: <n>
+        E2E_TESTS_PASSED: <n>
+        LOAD_TEST_RESULTS: [array of {endpoint, rps, p99_ms, error_rate}]
+        REGRESSION_STATUS: clean | regressions-found
+        REGRESSIONS: [list if any]
+        GO_NO_GO: GO | NO-GO | CONDITIONAL
+        BLOCKING_ISSUES: [list]
+
+hooks:
+  onSuccess:
+    - type: log
+      message: "QA validation swarm completed successfully"
+    - type: notify
+      message: |
+        QA validation completed!
+        GO/NO-GO: {{ steps.qa-compile.summary }}
+        Task: {{ task }}
+  onFailure:
+    - type: log
+      message: "QA validation swarm failed"
+    - type: notify
+      message: |
+        QA validation failed
+        Error: {{ error }}
+        Failed at step: {{ failed_step }}
