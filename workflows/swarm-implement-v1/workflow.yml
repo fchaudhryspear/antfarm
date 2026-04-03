@@ -1,0 +1,573 @@
+# swarm-implement-v1 — Multi-phase code implementation workflow (project-agnostic)
+# All project-specific details come from --context parameters and the architecture spec.
+# Usage: antfarm workflow run swarm-implement-v1 "<task description>" \
+#   --context repo_path=/path/to/repo \
+#   --context repo_name=my-repo \
+#   --context arch_path=docs/architecture/spec.json \
+#   --context prd_path=docs/PRD.md \
+#   --context branch=feature/my-feature
+id: swarm-implement-v1
+name: Implementation Swarm v1
+version: 2
+description: |
+  Project-agnostic multi-phase implementation pipeline.
+  Phase 1: Scaffold (migrations, deps, infra config)
+  Phase 2: Backend (models → repos → services → handlers → middleware → tests)
+  Phase 3: Frontend (context/hooks → pages → components)
+  Phase 4: DevOps (monitoring, E2E, load tests, runbook)
+  
+  All agents read the architecture spec to determine WHAT to build.
+  Context parameters tell them WHERE to build it.
+
+tags:
+  - implementation
+  - feature-development
+
+polling:
+  model: ollama-cloud/kimi-k2.5:cloud
+  intervalSeconds: 30
+  timeoutSeconds: 180
+
+agents:
+  - id: scaffolder
+    workspace:
+      baseDir: agents/scaffolder
+      files:
+        AGENTS.md: agents/scaffolder/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+    name: Scaffolder
+    description: Foundation tasks — migrations, deps, infra template, config
+
+  - id: backend-engineer
+    workspace:
+      baseDir: agents/backend-engineer
+      files:
+        AGENTS.md: agents/backend-engineer/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+    name: Backend Engineer
+    description: Backend implementation — models, repos, services, routes, tests
+
+  - id: backend-engineer-b
+    workspace:
+      baseDir: agents/backend-engineer-b
+      files:
+        AGENTS.md: agents/backend-engineer/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+    name: Backend Engineer B
+    description: Parallel backend — webhook handlers, middleware
+
+  - id: frontend-engineer-a
+    workspace:
+      baseDir: agents/frontend-engineer-a
+      files:
+        AGENTS.md: agents/frontend-engineer-a/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+    name: Frontend Engineer A
+    description: Frontend core — context, hooks, primary pages
+
+  - id: frontend-engineer-b
+    workspace:
+      baseDir: agents/frontend-engineer-b
+      files:
+        AGENTS.md: agents/frontend-engineer-b/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+    name: Frontend Engineer B
+    description: Frontend secondary pages, admin views, tests
+
+  - id: devops-engineer
+    workspace:
+      baseDir: agents/devops-engineer
+      files:
+        AGENTS.md: agents/devops-engineer/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+    name: DevOps Engineer
+    description: Phase 4 — monitoring, alarms, E2E tests, load tests, runbooks
+
+steps:
+  - id: phase-1-scaffold
+    agent: scaffolder
+    input: |
+      You are implementing Phase 1 (Foundation/Scaffold) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      PRD: {{ prd_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull origin {{ branch }}
+      3. Read the architecture spec at {{ arch_path }} — it defines ALL tables, infra, and config needed
+      4. Read the PRD at {{ prd_path }} — it defines the feature requirements
+
+      PHASE 1 SCOPE (Foundation):
+      - Database migrations for any new tables/views/indexes defined in the arch spec
+      - Dependency additions (requirements.txt, package.json) for any new libraries needed
+      - Infrastructure template changes (SAM/CDK/CloudFormation) for new Lambdas, queues, etc.
+      - Config files (secrets, env vars) referenced in the arch spec
+      - Migration runner scripts
+
+      RULES:
+      - Read the EXISTING codebase to understand patterns before writing anything
+      - Match existing code style, naming conventions, and directory structure
+      - After EACH file: git add <file> && git commit -m "feat(<scope>): <description>"
+      - After all tasks: git push origin {{ branch }}
+      - Reply with STATUS: done and list of files created
+
+    expects: "STATUS: done"
+    max_retries: 2
+    timeoutSeconds: 3600
+    on_fail: escalate_to_human
+
+  - id: phase-2-models
+    agent: backend-engineer
+    input: |
+      You are implementing Phase 2 Band 1 (Data Models) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull origin {{ branch }}
+      3. Read the architecture spec — it defines all data models, fields, types, and relationships
+      4. Read existing models in the codebase to understand the ORM pattern (SQLAlchemy, Django, etc.)
+
+      PHASE 2 BAND 1 SCOPE (Models):
+      - Create ORM model files for all new tables defined in the arch spec
+      - Match the existing model pattern (base class, imports, field types)
+      - Create/update __init__.py to export new models
+      - Fields MUST match the arch spec exactly — do not add or remove fields
+
+      RULES:
+      - Read existing models first to match patterns
+      - After EACH model file: git add <file> && git commit -m "feat(<scope>): add <model> model"
+      - Reply with STATUS: done
+
+    expects: "STATUS: done"
+    max_retries: 1
+    depends_on: [phase-1-scaffold]
+    on_fail: escalate_to_human
+
+  - id: phase-2-repos
+    agent: backend-engineer
+    input: |
+      You are implementing Phase 2 Band 2 (Repositories/Data Access) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull
+      3. Read the architecture spec for repository/data access layer requirements
+      4. Read existing repositories in the codebase to understand the pattern
+
+      PHASE 2 BAND 2 SCOPE (Repositories):
+      - Create repository classes for each new model
+      - CRUD operations + any query methods defined in the arch spec
+      - Tenant isolation / scoping as defined in auth section of arch spec
+      - Cursor pagination for list queries (match existing pattern)
+
+      RULES:
+      - Match existing repository patterns exactly
+      - After EACH file: git add <file> && git commit -m "feat(<scope>): add <name> repository"
+      - Reply with STATUS: done
+
+    expects: "STATUS: done"
+    max_retries: 2
+    timeoutSeconds: 2700
+    depends_on: [phase-2-models]
+    on_fail: escalate_to_human
+
+  - id: phase-2-services
+    agent: backend-engineer
+    input: |
+      You are implementing Phase 2 Band 3 (Services/Business Logic) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull
+      3. Read the architecture spec for service layer requirements (external API integrations, business logic, etc.)
+      4. Read existing services to understand patterns (circuit breakers, error handling, etc.)
+
+      PHASE 2 BAND 3 SCOPE (Services):
+      - Service classes with business logic as defined in the arch spec
+      - External API integrations with error handling
+      - Circuit breaker / retry patterns as specified
+      - Idempotency where required
+
+      RULES:
+      - Match existing service patterns
+      - After EACH file: git add <file> && git commit -m "feat(<scope>): add <name> service"
+      - Reply with STATUS: done
+
+    expects: "STATUS: done"
+    max_retries: 2
+    timeoutSeconds: 2700
+    depends_on: [phase-2-models]
+    on_fail: escalate_to_human
+
+  - id: phase-2-handlers-crud
+    agent: backend-engineer
+    input: |
+      You are implementing Phase 2 Band 4a (API Route Handlers) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull
+      3. Read the architecture spec → api_specification section for all endpoints
+      4. Read existing route handlers to understand the framework (FastAPI, Flask, Express, etc.) and patterns
+
+      PHASE 2 BAND 4a SCOPE (CRUD API Routes):
+      - Create route handler files for all CRUD endpoints defined in the arch spec
+      - Request/response schemas from the api_specification
+      - Auth middleware integration (JWT, role checks) as defined in the arch spec
+      - Input validation, error responses
+
+      RULES:
+      - Match existing route handler patterns exactly
+      - After EACH file: git add <file> && git commit -m "feat(<scope>): add <name> routes"
+      - Reply with STATUS: done
+
+    expects: "STATUS: done"
+    max_retries: 2
+    timeoutSeconds: 2700
+    depends_on: [phase-2-repos, phase-2-services]
+    on_fail: escalate_to_human
+
+  - id: phase-2-handlers-webhooks
+    agent: backend-engineer-b
+    input: |
+      You are implementing Phase 2 Band 4b (Webhook/Event Handlers) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull
+      3. Read the architecture spec for webhook/event handler requirements
+      4. Read existing Lambda handlers or event processors to understand patterns
+
+      PHASE 2 BAND 4b SCOPE (Webhook/Event Handlers):
+      - Webhook handler Lambda or event processor as defined in arch spec
+      - Signature verification for external webhooks
+      - Event routing by type
+      - Idempotency via DynamoDB or equivalent
+      - If no webhooks/events are defined in the arch spec, skip and reply STATUS: done
+
+      RULES:
+      - Match existing handler patterns
+      - After EACH file: git add <file> && git commit -m "feat(<scope>): add <name> handler"
+      - Reply with STATUS: done
+
+    expects: "STATUS: done"
+    max_retries: 2
+    timeoutSeconds: 2700
+    depends_on: [phase-2-repos, phase-2-services]
+    on_fail: escalate_to_human
+
+  - id: phase-2-middleware
+    agent: backend-engineer-b
+    input: |
+      You are implementing Phase 2 Band 5 (Middleware) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull
+      3. Read the architecture spec for middleware requirements (auth, tenant isolation, rate limiting, etc.)
+      4. Read existing middleware to understand patterns
+
+      PHASE 2 BAND 5 SCOPE (Middleware):
+      - Auth middleware (signature verification, JWT validation) as defined in arch spec
+      - Tenant isolation enforcement
+      - Any other middleware defined in the arch spec
+      - If no new middleware is needed, skip and reply STATUS: done
+
+      RULES:
+      - Match existing middleware patterns
+      - After EACH file: git add <file> && git commit -m "feat(<scope>): add <name> middleware"
+      - Reply with STATUS: done
+
+    expects: "STATUS: done"
+    max_retries: 2
+    timeoutSeconds: 2700
+    depends_on: [phase-2-models, phase-2-repos, phase-2-services]
+    on_fail: escalate_to_human
+
+  - id: phase-2-tests-models
+    agent: backend-engineer
+    input: |
+      You are implementing Phase 2 Band 6a (Model & Repository Tests) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull
+      3. Read the architecture spec at {{ arch_path }} for model/repo definitions
+      4. Read existing tests to understand the test framework (pytest, jest, etc.) and patterns
+      5. Read the NEW models and repositories from prior steps
+
+      SCOPE — MODELS & REPOSITORIES ONLY:
+      - Unit tests for all new ORM/data models (field types, defaults, constraints)
+      - Unit tests for all new repository methods (CRUD, queries, edge cases)
+      - Mock the database layer
+      - Do NOT test services, handlers, or middleware — other steps handle those
+
+      RULES:
+      - Match existing test patterns (fixtures, mocks, conftest)
+      - Run the tests and fix any failures before committing
+      - After EACH test file: git add <file> && git commit -m "test(models): add <name> tests"
+      - Reply with STATUS: done
+
+    expects: "STATUS: done"
+    max_retries: 2
+    timeoutSeconds: 1800
+    depends_on: [phase-2-models, phase-2-repos]
+    on_fail: escalate_to_human
+
+  - id: phase-2-tests-services
+    agent: backend-engineer-b
+    input: |
+      You are implementing Phase 2 Band 6b (Service Layer Tests) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull
+      3. Read the architecture spec at {{ arch_path }} for service definitions
+      4. Read existing tests to understand the test framework and patterns
+      5. Read the NEW services from prior steps
+
+      SCOPE — SERVICE LAYER ONLY:
+      - Unit tests for all new service classes/functions
+      - Mock external API calls, database repos, and dependencies
+      - Test business logic, error handling, edge cases
+      - Do NOT test models, repositories, handlers, or middleware
+
+      RULES:
+      - Match existing test patterns (fixtures, mocks, conftest)
+      - Run the tests and fix any failures before committing
+      - After EACH test file: git add <file> && git commit -m "test(services): add <name> tests"
+      - Reply with STATUS: done
+
+    expects: "STATUS: done"
+    max_retries: 2
+    timeoutSeconds: 1800
+    depends_on: [phase-2-services]
+    on_fail: escalate_to_human
+
+  - id: phase-2-tests-handlers
+    agent: backend-engineer
+    input: |
+      You are implementing Phase 2 Band 6c (Handler & Middleware Tests) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull
+      3. Read the architecture spec at {{ arch_path }} for API endpoint definitions
+      4. Read existing tests to understand the test framework and patterns
+      5. Read the NEW handlers and middleware from prior steps
+
+      SCOPE — HANDLERS & MIDDLEWARE ONLY:
+      - Integration tests for all new API endpoints (mock service layer)
+      - Auth enforcement tests (missing JWT → 401, wrong tenant → 403)
+      - Validation error tests (missing fields → 400)
+      - Happy path tests for each endpoint
+      - Middleware unit tests
+      - Do NOT test models, repositories, or services
+
+      RULES:
+      - Match existing test patterns (fixtures, mocks, conftest)
+      - Run the tests and fix any failures before committing
+      - After EACH test file: git add <file> && git commit -m "test(handlers): add <name> tests"
+      - Reply with STATUS: done
+
+    expects: "STATUS: done"
+    max_retries: 2
+    timeoutSeconds: 1800
+    depends_on: [phase-2-handlers-crud, phase-2-handlers-webhooks, phase-2-middleware]
+    on_fail: escalate_to_human
+
+  - id: phase-3-frontend-a
+    agent: frontend-engineer-a
+    input: |
+      You are implementing Phase 3 Frontend A (Core UI) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull
+      3. Read the architecture spec → frontend_design section for components, hooks, routes
+      4. Read existing frontend code to understand the framework (React, Vue, etc.), state management, and patterns
+
+      PHASE 3-A SCOPE (Frontend Core):
+      - Context/state management for the new feature (match existing pattern)
+      - Custom hooks for data fetching (match existing hook patterns)
+      - Primary page components as defined in the arch spec's frontend_design
+      - Routing updates for new pages
+      - Type definitions for new data structures
+
+      RULES:
+      - Read existing frontend patterns FIRST (components, hooks, contexts)
+      - Match existing code style, component patterns, and naming conventions
+      - After EACH file: git add <file> && git commit -m "feat(<scope>): add <component>"
+      - After all tasks: git push origin {{ branch }}
+      - Reply with STATUS: done
+
+    expects: "STATUS: done"
+    max_retries: 1
+    depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers]
+    on_fail: escalate_to_human
+
+  - id: phase-3-frontend-b
+    agent: frontend-engineer-b
+    input: |
+      You are implementing Phase 3 Frontend B (Secondary Pages & Tests) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull
+      3. Read the architecture spec → frontend_design for remaining components
+      4. Read existing frontend code AND the new code from Frontend A (contexts, hooks)
+
+      PHASE 3-B SCOPE (Frontend Secondary + Tests):
+      - Secondary/detail page components from the arch spec
+      - Admin/config pages if defined
+      - Form components (modals, wizards)
+      - Navigation updates
+      - Frontend unit tests (Vitest/Jest + Testing Library)
+
+      RULES:
+      - Use hooks/contexts created by Frontend A — do NOT duplicate state management
+      - After EACH file: git add <file> && git commit -m "feat(<scope>): add <component>"
+      - After all tasks: git push origin {{ branch }}
+      - Reply with STATUS: done
+
+    expects: "STATUS: done"
+    max_retries: 1
+    depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers]
+    on_fail: escalate_to_human
+
+  - id: phase-4-devops
+    agent: devops-engineer
+    input: |
+      You are implementing Phase 4 (DevOps & Observability) for this project.
+
+      REPO: {{ repo_path }}
+      BRANCH: {{ branch }}
+      ARCHITECTURE: {{ arch_path }}
+      TASK: {{ task }}
+
+      YOUR JOB:
+      1. cd {{ repo_path }}
+      2. git checkout {{ branch }} && git pull
+      3. Read the architecture spec for infrastructure, monitoring, and deployment requirements
+      4. Read existing DevOps configs (CloudWatch, alarms, dashboards, CI/CD) to understand patterns
+
+      PHASE 4 SCOPE (DevOps):
+      - CloudWatch alarms for new Lambdas/queues/endpoints as defined in arch spec
+      - Dashboard widgets for new metrics
+      - EventBridge rules for scheduled jobs (if defined)
+      - E2E test script covering the happy path
+      - Load test script for critical endpoints
+      - Troubleshooting runbook for the new feature
+      - CI/CD pipeline updates if needed
+
+      FRONTEND DEPLOYMENT (MANDATORY — do not skip):
+      - Read the architecture spec → deployment_targets section for S3/CloudFront targets
+      - If deployment_targets.frontend is defined:
+        * Create scripts/deploy-frontend.sh that runs:
+          - build command (e.g. npm run build)
+          - aws s3 sync dist/ to {{ s3_bucket }}
+          - aws cloudfront create-invalidation on {{ cloudfront_dist_id }}
+        * Create .github/workflows/deploy-frontend.yml for auto-deploy on push to main
+        * The workflow must trigger on: push to main + paths: ['frontend/**', 'frontend-v2/**', 'src/**', 'package.json']
+        * The workflow must set all required VITE_* env vars as GitHub secrets/actions vars
+        * Add S3 bucket name and CloudFront distribution ID to deployment config
+      - If the architecture spec has NO deployment_targets.frontend entry, use defaults:
+        * s3_bucket: flobase-dashboard-prod
+        * cloudfront_dist_id: EAJ0UGQ8HMKT1
+        * build_command: npm run build
+        * build_dir: frontend-v2/dist
+      - After creating deploy-frontend.sh: chmod +x scripts/deploy-frontend.sh
+
+      RULES:
+      - Match existing monitoring/DevOps patterns
+      - Do NOT deploy to production — only create the configs
+      - After EACH file: git add <file> && git commit -m "feat(<scope>): add <description>"
+      - After all tasks: git push origin {{ branch }}
+      - Reply with STATUS: done
+
+    expects: "STATUS: done"
+    max_retries: 1
+    depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers, phase-3-frontend-a, phase-3-frontend-b]
+    on_fail: escalate_to_human
+
+hooks:
+  onSuccess:
+    - type: log
+      message: "Implementation swarm completed successfully"
+    - type: notify
+      message: |
+        Implementation swarm completed!
+        Task: {{ task }}
+        Branch: {{ branch }}
+        Repo: {{ repo_name }}
+        Next step: Code review and merge to main
+
+  onFailure:
+    - type: log
+      message: "Implementation swarm failed at step: {{ failed_step }}"
+    - type: notify
+      message: |
+        Implementation swarm failed
+        Failed at step: {{ failed_step }}
+        Error: {{ error }}
+        Branch: {{ branch }}
+        Check failed step output for details.
