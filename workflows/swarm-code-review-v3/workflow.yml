@@ -13,9 +13,13 @@ context:
   repo_name: "" # REQUIRED at dispatch time: --context repo_name=my-project
   scope: full-stack # can override: --context scope=backend-only
   focus_areas: security,performance,architecture,code-quality,testing,devops
+  review_mode: full # Options: full | diff-only
+  # When review_mode=diff-only, agents only review changed files (git diff main..branch)
+  # When review_mode=full, agents review the entire codebase
+  diff_base: main # Base branch for diff-only mode
   # Exclude patterns applied in every agent's file discovery step:
   exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
-  review_directive: "Analyze the actual source code in {{ repo_path }}. Read source files before producing findings. Do NOT fabricate reviews. Do NOT discuss the workflow, pipeline, agent infrastructure, or task metadata. Exclude: {{ exclude_patterns }}."
+  review_directive: "Analyze the actual source code in {{ repo_path }}. Read source files before producing findings. Do NOT fabricate reviews. Do NOT discuss the workflow, pipeline, agent infrastructure, or task metadata. Exclude: {{ exclude_patterns }}. Review mode: {{ review_mode }}. If review_mode=diff-only, ONLY review files changed between {{ diff_base }} and current branch (run: git diff --name-only {{ diff_base }}..HEAD). If review_mode=full, review the entire codebase."
 acceptance_criteria:
 - All 10 review agents complete in parallel
 - All 10 agents produce SCORE: and at least 1 finding from actual source code

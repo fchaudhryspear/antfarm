@@ -84,6 +84,7 @@ steps:
     expects: 'ACCEPTANCE_RESULT:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Validate implementation against PRD acceptance criteria.
       REPO_PATH: {{ repo_path }}
@@ -118,6 +119,7 @@ steps:
     expects: 'E2E_RESULT:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Write and run E2E tests for the implementation.
       REPO_PATH: {{ repo_path }}
@@ -155,6 +157,7 @@ steps:
     expects: 'LOAD_RESULT:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Write and run load test scripts for new endpoints.
       REPO_PATH: {{ repo_path }}
@@ -186,6 +189,7 @@ steps:
     expects: 'REGRESSION_RESULT:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Run full test suite and check for regressions.
       REPO_PATH: {{ repo_path }}
@@ -227,6 +231,7 @@ steps:
     expects: 'QA_STATUS:'
     timeoutSeconds: 2700
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Consolidate all QA results and produce GO/NO-GO recommendation.
       REPO_PATH: {{ repo_path }}

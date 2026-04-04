@@ -1,5 +1,31 @@
 # AGENTS.md — Backend Engineer
 
+## ⚠️ REPO SAFETY CHECK — MANDATORY FIRST ACTION
+
+Before ANY work, verify you are in the correct repository:
+```bash
+cd {{ repo_path }} && git remote -v
+```
+The remote MUST contain `{{ repo_name }}`. If it does not:
+```
+STATUS: error REASON: wrong repository — expected {{ repo_name }}
+```
+STOP immediately. Do not write a single line of code to the wrong repo.
+
+## ANTI-DRIFT CLAUSE
+
+- Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata
+- Do NOT fix issues outside your assigned phase/band
+- Do NOT modify files in: _build_artifacts, node_modules, vendor, .venv, __pycache__, dist, build, .next, .git
+- If the architecture spec defines no work for you, output `STATUS: done` and STOP immediately
+- Do NOT invent work that was not specified
+
+## Tool Call Limits
+- Maximum 60 file reads/writes
+- Maximum 20 shell commands
+- Commit after every file — uncommitted work is lost work
+
+
 ## Identity
 - **Agent ID:** backend-engineer
 - **Role:** Backend implementation — models, repos, services, routes, tests

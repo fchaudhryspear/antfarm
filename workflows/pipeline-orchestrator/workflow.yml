@@ -34,6 +34,22 @@ context:
   test_cmd: "npm test --passWithNoTests 2>/dev/null || pytest -x -q 2>/dev/null || true"
   pipeline_directive: "Orchestrate the SDLC pipeline for {{ repo_path }}. Do NOT fabricate results. Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata. Exclude: {{ exclude_patterns }}."
 
+definition_of_done:
+  - "Code reviewed by swarm-code-review-v3 with overall score ≥ 70"
+  - "All review findings addressed (fixed, deferred with justification, or disputed with evidence)"
+  - "Unit tests written for all new functions/endpoints"
+  - "E2E tests written for critical user flows"
+  - "No new regressions (regression-checker status = clean)"
+  - "Acceptance criteria ≥ 90% PASS for GO, ≥ 70% for CONDITIONAL"
+  - "Security scan passed — no critical or high vulnerabilities unfixed"
+  - "Documentation updated (README, API docs, inline comments for complex logic)"
+  - "No hardcoded secrets, API keys, or environment-specific values in code"
+  - "Performance: no endpoint p99 > 2000ms under load test"
+  - "Accessibility: all new UI components have ARIA labels and keyboard navigation"
+  - "Tech debt tracked — deferred items filed as issues or documented"
+  - "Release notes generated with breaking changes documented"
+  - "Deployment readiness report written with rollback procedure"
+
 acceptance_criteria:
   - "All 7 sub-workflows complete successfully or with documented partial success"
   - "Human gates fire after requirements and architecture (unless auto_approve=true)"
@@ -45,7 +61,7 @@ acceptance_criteria:
 
 polling:
   model: ollama-cloud/glm-5:cloud
-  timeoutSeconds: 43200  # 12 hours max for full pipeline
+  timeoutSeconds: 64800  # 18 hours max for full pipeline (7x6000s dispatch + 3x1800s gate/report + buffer)
 
 agents:
   - id: pipeline-controller
@@ -90,6 +106,7 @@ steps:
     expects: 'REQUIREMENTS_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       PHASE: requirements
@@ -121,6 +138,7 @@ steps:
     expects: 'GATE_STATUS:'
     timeoutSeconds: 1800
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       PHASE: requirements-gate
@@ -150,6 +168,7 @@ steps:
     expects: 'ARCHITECTURE_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       PHASE: architecture
@@ -185,6 +204,7 @@ steps:
     expects: 'GATE_STATUS:'
     timeoutSeconds: 1800
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       PHASE: architecture-gate
@@ -214,6 +234,7 @@ steps:
     expects: 'IMPLEMENTATION_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       PHASE: implementation
@@ -249,6 +270,7 @@ steps:
     expects: 'REVIEW_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       PHASE: review
@@ -281,6 +303,7 @@ steps:
     expects: 'FIX_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       PHASE: fix
@@ -315,6 +338,7 @@ steps:
     expects: 'QA_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       PHASE: qa
@@ -349,6 +373,7 @@ steps:
     expects: 'PIPELINE_REPORT:'
     timeoutSeconds: 1800
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -379,6 +404,7 @@ steps:
     expects: 'RETRO_STATUS:'
     timeoutSeconds: 1800
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}

@@ -80,6 +80,7 @@ steps:
     expects: 'DEPLOY_STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -122,6 +123,7 @@ steps:
     expects: 'SMOKE_STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -169,6 +171,7 @@ steps:
     expects: 'RELEASE_NOTES_STATUS:'
     timeoutSeconds: 2700
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -220,6 +223,7 @@ steps:
     expects: 'RELEASE_STATUS:'
     timeoutSeconds: 2700
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}

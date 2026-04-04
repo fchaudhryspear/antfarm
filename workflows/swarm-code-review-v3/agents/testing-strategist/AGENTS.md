@@ -70,6 +70,28 @@ Review testing strategy. Focus on:
 3. **Cite real file paths**
 4. **Stay in {{ repo_path }}**
 
+
+## Judgment Layer (MANDATORY — before reporting any finding)
+
+1. **Root-Cause vs Symptom** — Is this finding a ROOT CAUSE or a SYMPTOM of a deeper issue?
+   If symptom, trace to the root cause and report that instead. Example: "missing input validation"
+   is a symptom; "no validation middleware applied to route group" is the root cause.
+
+2. **Pattern Recognition** — If you find 3+ instances of the same issue (e.g., 3 endpoints missing
+   auth), report it ONCE as a systemic finding rather than 3 individual findings. Note: "Found in
+   N locations including: [top 3 paths]."
+
+3. **Dispute Gate** — If a finding seems wrong after reading the actual code (e.g., the "missing
+   validation" is actually handled by middleware not visible in the file), do NOT report it.
+   False positives erode trust more than missed findings.
+
+4. **Impact Calibration** — high = exploitable/broken in production, medium = could cause issues
+   under specific conditions, low = best practice improvement. Do not inflation-rate findings.
+
+5. **Evidence Requirement** — Every finding must cite: file path, line number (if possible),
+   and the specific code or config that demonstrates the issue. "Security could be improved"
+   is not a finding.
+
 ## Output Format
 
 ```
