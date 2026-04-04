@@ -49,7 +49,7 @@ agents:
   - id: triager
     name: Triager
     role: analysis
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/minimax-m2.7:cloud
     description: Analyzes bug reports, reproduces issues, classifies severity.
     workspace:
       baseDir: agents/triager
@@ -61,7 +61,7 @@ agents:
   - id: investigator
     name: Investigator
     role: analysis
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/deepseek-v3.2:cloud
     description: Traces bugs to root cause and proposes fix approach.
     workspace:
       baseDir: agents/investigator
@@ -73,7 +73,7 @@ agents:
   - id: setup
     name: Setup
     role: coding
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/qwen3-coder-next:cloud
     description: Creates bugfix branch and establishes baseline.
     workspace:
       baseDir: agents/setup
@@ -83,7 +83,7 @@ agents:
   - id: fixer
     name: Fixer
     role: coding
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/qwen3-coder:480b-cloud
     description: Implements the fix and writes regression tests.
     workspace:
       baseDir: agents/fixer
@@ -95,7 +95,7 @@ agents:
   - id: verifier
     name: Verifier
     role: verification
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/minimax-m2.7:cloud
     description: Verifies the fix and regression test correctness.
     workspace:
       baseDir: agents/verifier
@@ -105,7 +105,7 @@ agents:
   - id: pr
     name: PR Creator
     role: pr
-    model: ollama-cloud/minimax-m2.7:cloud
+    model: ollama-cloud/qwen3.5:397b-cloud
     description: Creates a pull request with bug fix details.
     workspace:
       baseDir: agents/pr

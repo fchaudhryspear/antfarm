@@ -42,7 +42,7 @@ agents:
       baseDir: agents/intake-parser
       files:
         AGENTS.md: agents/intake-parser/AGENTS.md
-    model: ollama-cloud/minimax-m2.7:cloud
+    model: ollama-cloud/qwen3.5:397b-cloud
 
   - id: product-strategist
     name: Product Strategist
@@ -51,7 +51,7 @@ agents:
       baseDir: agents/product-strategist
       files:
         AGENTS.md: agents/product-strategist/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/qwen3.5:397b-cloud
 
   - id: technical-feasibility
     name: Technical Feasibility Analyst
@@ -60,7 +60,7 @@ agents:
       baseDir: agents/technical-feasibility
       files:
         AGENTS.md: agents/technical-feasibility/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/deepseek-v3.2:cloud
 
   - id: ux-flow-designer
     name: UX Flow Designer
@@ -69,7 +69,7 @@ agents:
       baseDir: agents/ux-flow-designer
       files:
         AGENTS.md: agents/ux-flow-designer/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/kimi-k2.5:cloud
 
   - id: security-compliance
     name: Security & Compliance Analyst
@@ -78,7 +78,7 @@ agents:
       baseDir: agents/security-compliance
       files:
         AGENTS.md: agents/security-compliance/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/deepseek-v3.2:cloud
 
   - id: prd-compiler
     name: PRD Compiler
@@ -87,7 +87,7 @@ agents:
       baseDir: agents/prd-compiler
       files:
         AGENTS.md: agents/prd-compiler/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/glm-5:cloud
 
 steps:
   - id: intake

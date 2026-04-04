@@ -49,7 +49,7 @@ agents:
       baseDir: agents/e2e-tester
       files:
         AGENTS.md: agents/e2e-tester/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/qwen3-coder-next:cloud
 
   - id: load-tester
     name: Load Tester
@@ -58,7 +58,7 @@ agents:
       baseDir: agents/load-tester
       files:
         AGENTS.md: agents/load-tester/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/qwen3-coder-next:cloud
 
   - id: regression-checker
     name: Regression Checker
@@ -67,7 +67,7 @@ agents:
       baseDir: agents/regression-checker
       files:
         AGENTS.md: agents/regression-checker/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/minimax-m2.7:cloud
 
   - id: qa-compiler
     name: QA Compiler
@@ -76,7 +76,7 @@ agents:
       baseDir: agents/qa-compiler
       files:
         AGENTS.md: agents/qa-compiler/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/deepseek-v3.2:cloud
 
 steps:
   - id: acceptance-check

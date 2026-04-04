@@ -45,7 +45,7 @@ agents:
       baseDir: agents/deploy-staging
       files:
         AGENTS.md: agents/deploy-staging/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/qwen3-coder-next:cloud
 
   - id: smoke-tester
     name: Smoke Tester
@@ -54,7 +54,7 @@ agents:
       baseDir: agents/smoke-tester
       files:
         AGENTS.md: agents/smoke-tester/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/qwen3-coder-next:cloud
 
   - id: release-notes
     name: Release Notes Generator
@@ -63,7 +63,7 @@ agents:
       baseDir: agents/release-notes
       files:
         AGENTS.md: agents/release-notes/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/qwen3.5:397b-cloud
 
   - id: release-compiler
     name: Release Compiler
@@ -72,7 +72,7 @@ agents:
       baseDir: agents/release-compiler
       files:
         AGENTS.md: agents/release-compiler/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/deepseek-v3.2:cloud
 
 steps:
   - id: deploy

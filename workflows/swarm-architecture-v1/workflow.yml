@@ -48,7 +48,7 @@ agents:
       baseDir: agents/arch-intake
       files:
         AGENTS.md: agents/arch-intake/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/qwen3.5:397b-cloud
   - id: system-architect
     name: System Architect
     role: design
@@ -56,7 +56,7 @@ agents:
       baseDir: agents/system-architect
       files:
         AGENTS.md: agents/system-architect/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/deepseek-v3.2:cloud
   - id: api-designer
     name: API Designer
     role: design
@@ -64,7 +64,7 @@ agents:
       baseDir: agents/api-designer
       files:
         AGENTS.md: agents/api-designer/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/minimax-m2.7:cloud
   - id: data-architect
     name: Data Architect
     role: design
@@ -72,7 +72,7 @@ agents:
       baseDir: agents/data-architect
       files:
         AGENTS.md: agents/data-architect/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/deepseek-v3.2:cloud
   - id: frontend-architect
     name: Frontend Architect
     role: design
@@ -80,7 +80,7 @@ agents:
       baseDir: agents/frontend-architect
       files:
         AGENTS.md: agents/frontend-architect/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/kimi-k2.5:cloud
   - id: devops-architect
     name: DevOps Architect
     role: design
@@ -88,7 +88,7 @@ agents:
       baseDir: agents/devops-architect
       files:
         AGENTS.md: agents/devops-architect/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/minimax-m2.7:cloud
   - id: visual-designer
     name: Visual Designer
     role: design
@@ -96,7 +96,7 @@ agents:
       baseDir: agents/visual-designer
       files:
         AGENTS.md: agents/visual-designer/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/kimi-k2.5:cloud
   - id: arch-compiler
     name: Architecture Compiler
     role: compile
@@ -104,7 +104,7 @@ agents:
       baseDir: agents/arch-compiler
       files:
         AGENTS.md: agents/arch-compiler/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/deepseek-v3.2:cloud
 steps:
   - id: parse-prd
     agent: arch-intake

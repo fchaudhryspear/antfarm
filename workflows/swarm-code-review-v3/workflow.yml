@@ -37,7 +37,7 @@ agents:
     baseDir: agents/code-quality
     files:
       AGENTS.md: agents/code-quality/AGENTS.md
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/minimax-m2.7:cloud
 - id: security-auditor
   name: Security Auditor
   role: scanning
@@ -45,7 +45,7 @@ agents:
     baseDir: agents/security-auditor
     files:
       AGENTS.md: agents/security-auditor/AGENTS.md
-  model: ollama-cloud/kimi-k2.5:cloud  # v3.4: upgraded — needs deeper code comprehension for vuln analysis
+  model: ollama-cloud/deepseek-v3.2:cloud
 - id: performance-engineer
   name: Performance Engineer
   role: analysis
@@ -53,7 +53,7 @@ agents:
     baseDir: agents/performance-engineer
     files:
       AGENTS.md: agents/performance-engineer/AGENTS.md
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/minimax-m2.7:cloud
 - id: ux-specialist
   name: UX Specialist
   role: analysis
@@ -61,7 +61,7 @@ agents:
     baseDir: agents/ux-specialist
     files:
       AGENTS.md: agents/ux-specialist/AGENTS.md
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/kimi-k2.5:cloud
 - id: backend-architect
   name: Backend Architect
   role: analysis
@@ -69,7 +69,7 @@ agents:
     baseDir: agents/backend-architect
     files:
       AGENTS.md: agents/backend-architect/AGENTS.md
-  model: ollama-cloud/kimi-k2.5:cloud  # v3.4: upgraded — needs code comprehension for architecture review
+  model: ollama-cloud/minimax-m2.7:cloud
 - id: frontend-architect
   name: Frontend Architect
   role: analysis
@@ -77,7 +77,7 @@ agents:
     baseDir: agents/frontend-architect
     files:
       AGENTS.md: agents/frontend-architect/AGENTS.md
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/kimi-k2.5:cloud
 - id: devops-engineer
   name: DevOps Engineer
   role: analysis
@@ -85,7 +85,7 @@ agents:
     baseDir: agents/devops-engineer
     files:
       AGENTS.md: agents/devops-engineer/AGENTS.md
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/minimax-m2.7:cloud
 - id: documentation-specialist
   name: Documentation Specialist
   role: analysis
@@ -93,7 +93,7 @@ agents:
     baseDir: agents/documentation-specialist
     files:
       AGENTS.md: agents/documentation-specialist/AGENTS.md
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/qwen3.5:397b-cloud
 - id: testing-strategist
   name: Testing Strategist
   role: testing
@@ -101,7 +101,7 @@ agents:
     baseDir: agents/testing-strategist
     files:
       AGENTS.md: agents/testing-strategist/AGENTS.md
-  model: ollama-cloud/kimi-k2.5:cloud  # v3.4: upgraded — needs test pattern knowledge
+  model: ollama-cloud/glm-5:cloud
 - id: product-strategist
   name: Product Strategist
   role: analysis
@@ -109,7 +109,7 @@ agents:
     baseDir: agents/product-strategist
     files:
       AGENTS.md: agents/product-strategist/AGENTS.md
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/qwen3.5:397b-cloud
 - id: consolidate
   name: Consolidator
   role: analysis
@@ -117,7 +117,7 @@ agents:
     baseDir: agents/consolidate
     files:
       AGENTS.md: agents/consolidate/AGENTS.md
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/deepseek-v3.2:cloud
 steps:
 - id: code-quality-review
   agent: code-quality

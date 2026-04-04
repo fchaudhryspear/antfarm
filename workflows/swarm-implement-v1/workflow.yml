@@ -56,7 +56,7 @@ agents:
       baseDir: agents/scaffolder
       files:
         AGENTS.md: agents/scaffolder/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/qwen3-coder-next:cloud
     name: Scaffolder
     description: Foundation tasks — migrations, deps, infra template, config
 
@@ -65,7 +65,7 @@ agents:
       baseDir: agents/backend-engineer
       files:
         AGENTS.md: agents/backend-engineer/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/qwen3-coder:480b-cloud
     name: Backend Engineer
     description: Backend implementation — models, repos, services, routes, tests
 
@@ -74,7 +74,7 @@ agents:
       baseDir: agents/backend-engineer-b
       files:
         AGENTS.md: agents/backend-engineer/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/qwen3-coder-next:cloud
     name: Backend Engineer B
     description: Parallel backend — webhook handlers, middleware
 
@@ -101,7 +101,7 @@ agents:
       baseDir: agents/devops-engineer
       files:
         AGENTS.md: agents/devops-engineer/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/qwen3-coder-next:cloud
     name: DevOps Engineer
     description: Phase 4 — monitoring, alarms, E2E tests, load tests, runbooks
 
