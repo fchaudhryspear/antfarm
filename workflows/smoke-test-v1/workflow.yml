@@ -1,0 +1,109 @@
+name: smoke-test-v1
+version: "1.0"
+description: Post-merge smoke test gate for Flobase portal Lambda
+
+# Usage:
+#   antfarm workflow run smoke-test-v1 "smoke test after PR #123"
+#
+# Context vars (override as needed):
+#   repo_path      - path to flobase repo (default: ~/dev/flobase-capital-platform)
+#   stack_name     - staging CloudFormation stack (default: flobase-staging)
+#   function_name  - Lambda function name (default: flobase-api-handler-staging)
+#   aws_profile    - AWS CLI profile (default: security)
+
+context:
+  repo_path: "/Users/faisalshomemacmini/dev/flobase-capital-platform"
+  stack_name: "flobase-staging"
+  function_name: "flobase-api-handler-staging"
+  aws_profile: "security"
+  aws_region: "us-east-1"
+
+steps:
+  - id: deploy
+    name: Deploy staging Lambda
+    agent: smoke-deployer
+    model: minimax-m2.7:cloud
+    timeout: 300
+    input: |
+      Deploy the staging Lambda function from {{ repo_path }}.
+
+      Steps:
+      1. cd {{ repo_path }}/backend/lambdas/api-handler
+      2. Run: chmod +x build.sh && ./build.sh
+      3. Update Lambda code:
+         aws lambda update-function-code \
+           --function-name {{ function_name }} \
+           --zip-file fileb://lambda.zip \
+           --region {{ aws_region }} \
+           --profile {{ aws_profile }}
+      4. Wait for update: aws lambda wait function-updated --function-name {{ function_name }} --region {{ aws_region }} --profile {{ aws_profile }}
+
+      If the function doesn't exist, output: DEPLOY_STATUS: function_not_found
+      If deploy succeeds, output: DEPLOY_STATUS: ok
+      If deploy fails, output: DEPLOY_STATUS: failed REASON: <error>
+
+  - id: smoke-test
+    name: Run 3 smoke tests
+    agent: smoke-tester
+    model: minimax-m2.7:cloud
+    depends_on: [deploy]
+    timeout: 120
+    input: |
+      Run 3 smoke tests against Lambda function {{ function_name }}.
+
+      Test 1 — Lambda invokes without errorType:
+      aws lambda invoke \
+        --function-name {{ function_name }} \
+        --payload '{"httpMethod":"GET","path":"/status","headers":{},"queryStringParameters":null,"pathParameters":null,"requestContext":{"authorizer":null}}' \
+        --region {{ aws_region }} --profile {{ aws_profile }} \
+        /tmp/smoke_t1.json
+      cat /tmp/smoke_t1.json
+      Pass if: no "errorType" key in response
+
+      Test 2 — /status returns 200:
+      (re-use /tmp/smoke_t1.json from Test 1)
+      Pass if: statusCode == 200
+
+      Test 3 — /api/auth returns 401, not 500:
+      aws lambda invoke \
+        --function-name {{ function_name }} \
+        --payload '{"httpMethod":"GET","path":"/api/auth","headers":{},"queryStringParameters":null,"pathParameters":null,"requestContext":{"authorizer":null}}' \
+        --region {{ aws_region }} --profile {{ aws_profile }} \
+        /tmp/smoke_t3.json
+      cat /tmp/smoke_t3.json
+      Pass if: statusCode != 500
+
+      Output exactly one of:
+        SMOKE_PASS: true
+        SMOKE_PASS: false FAILED_TESTS: <comma-separated test numbers> REASON: <brief description>
+
+  - id: revert
+    name: Create revert PR on failure
+    agent: smoke-reverter
+    model: minimax-m2.7:cloud
+    depends_on: [smoke-test]
+    condition: "SMOKE_PASS: false"
+    timeout: 120
+    input: |
+      Smoke test failed. Create a revert PR in {{ repo_path }}.
+
+      Steps:
+      1. cd {{ repo_path }}
+      2. git config user.name "optimus-smoke-test"
+      3. git config user.email "optimus@flobase.ai"
+      4. REVERT_BRANCH="revert/smoke-test-$(date +%Y%m%d-%H%M)"
+      5. git checkout -b "$REVERT_BRANCH"
+      6. git revert HEAD --no-edit
+      7. git push origin "$REVERT_BRANCH"
+      8. gh pr create \
+           --title "REVERT: Smoke test failed" \
+           --body "Automatic revert — smoke test failed. See antfarm smoke-test-v1 run for details." \
+           --base main \
+           --head "$REVERT_BRANCH"
+
+      Output: STATUS: revert_pr_created PR_BRANCH: <branch> or STATUS: revert_failed REASON: <error>
+
+acceptance_criteria:
+  - deploy_succeeds_or_function_exists
+  - all_3_smoke_tests_pass
+  - revert_pr_created_if_any_test_fails

@@ -65,7 +65,7 @@ Review testing strategy. Focus on:
 
 ## Critical Rules
 
-1. **LIMIT TO 7 FINDINGS MAX**
+1. **LIMIT TO 12 FINDINGS MAX**
 2. **Do NOT spawn sub-agents**
 3. **Cite real file paths**
 4. **Stay in {{ repo_path }}**
@@ -105,4 +105,4 @@ FINDINGS:
 
 ## Termination
 
-**STOP after 7 findings.** Output the format above and complete the step.
+**STOP after 12 findings.** Output the format above and complete the step.

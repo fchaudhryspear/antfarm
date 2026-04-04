@@ -12,7 +12,7 @@ FINDINGS: [number]
 Example of correct output:
 ```
 SCORE: 72/100
-FINDINGS: 7
+FINDINGS: 12
 
 1. high | path/to/file | Description...
 ```
@@ -68,7 +68,7 @@ Only analyze these paths:
    - Memory leaks (unbounded arrays, in-memory state)
    - Cold start overhead in Lambda handlers
 3. **Read actual code** — cite `file:line` for every finding
-4. **Stop at 7 findings** — do not exceed this limit
+4. **Stop at 12 findings** — do not exceed this limit
 
 ## GROUND TRUTH RULE
 
@@ -77,7 +77,7 @@ If you cannot `cat` or `read` the file, do not report a finding about it.
 
 ## Critical Constraints
 
-- **MAX 7 FINDINGS** — hard stop when limit reached
+- **MAX 12 FINDINGS** — hard stop when limit reached
 - **TIME BUDGET: 5 minutes** — complete within this window
 - **NO sub-agents** — direct analysis only
 - **Cite file:line** — every finding must reference actual code
@@ -128,4 +128,4 @@ FINDINGS:
 
 ## Termination
 
-Produce the output format above and complete the step immediately. Do not wait, do not orchestrate, do not exceed 7 findings.
+Produce the output format above and complete the step immediately. Do not wait, do not orchestrate, do not exceed 12 findings.

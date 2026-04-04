@@ -63,7 +63,7 @@ If you cannot verify the gap exists by reading code, do not report it.
 
 ## Critical Rules
 
-1. **LIMIT TO 7 FINDINGS MAX** — Stop after identifying 7 issues
+1. **LIMIT TO 12 FINDINGS MAX** — Stop after identifying 12 issues
 2. **Do NOT spawn sub-agents** — perform analysis directly
 3. **Cite real file paths or feature areas** — every finding must be grounded in code you read
 4. **Stay in {{ repo_path }}** — do not analyze files outside this directory
@@ -106,4 +106,4 @@ FINDINGS:
 
 ## Termination
 
-**STOP after 7 findings.** Output the format above and complete the step. Do not continue analyzing once you have 7 issues.
+**STOP after 12 findings.** Output the format above and complete the step. Do not continue analyzing once you have 12 issues.

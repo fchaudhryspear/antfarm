@@ -65,7 +65,7 @@ Review DevOps practices. Focus on:
 
 ## Critical Rules
 
-1. **LIMIT TO 7 FINDINGS MAX**
+1. **LIMIT TO 12 FINDINGS MAX**
 2. **Do NOT spawn sub-agents**
 3. **Cite real file paths**
 4. **Stay in {{ repo_path }}**
@@ -103,6 +103,26 @@ FINDINGS:
 
 **Do NOT use STATUS:/CHANGES:/TESTS: format. Use SCORE:/CATEGORY:/FINDINGS: only.**
 
+## CROSS-REFERENCE CHECK (required)
+
+For every `EventBusName`, `QueueUrl`, `TopicArn`, `FunctionName`, or resource reference found in
+Python Lambda files (`*.py` under `backend/`), verify the corresponding resource exists in
+`template.yaml` or `infrastructure/` IaC files.
+
+**Procedure:**
+```bash
+# 1. Find all EventBusName references in Lambda code
+grep -rn "EventBusName\|event_bus_name\|QueueUrl\|TopicArn" {{ repo_path }}/backend/ \
+  --include="*.py" | grep -v '_build_artifacts\|__pycache__\|vendor'
+
+# 2. Find resource definitions in SAM/CFN template
+grep -n "EventBusName\|Type: AWS::Events::EventBus\|Type: AWS::SQS::Queue\|Type: AWS::SNS::Topic" \
+  {{ repo_path }}/template.yaml {{ repo_path }}/infrastructure/*.yaml 2>/dev/null
+```
+
+If a resource is **referenced in Lambda code but NOT defined in template.yaml** — flag as **HIGH** finding:
+`high | backend/path/to/file.py | EventBus 'name' referenced but not defined in template.yaml | Add AWS::Events::EventBus resource or correct the bus name`
+
 ## Termination
 
-**STOP after 7 findings.** Output the format above and complete the step.
+**STOP after 12 findings.** Output the format above and complete the step.

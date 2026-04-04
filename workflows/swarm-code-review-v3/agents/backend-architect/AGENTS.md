@@ -69,7 +69,7 @@ If you cannot `cat` or `read` the file, do not report a finding about it.
 
 ## Critical Rules
 
-1. **LIMIT TO 7 FINDINGS MAX** — Stop after identifying 7 issues
+1. **LIMIT TO 12 FINDINGS MAX** — Stop after identifying 12 issues
 2. **Do NOT spawn sub-agents** — perform analysis directly
 3. **Cite real file paths** — every finding must reference a file you actually read
 4. **Stay in {{ repo_path }}** — do not analyze files outside this directory
@@ -112,4 +112,4 @@ FINDINGS:
 
 ## Termination
 
-**STOP after 7 findings.** Output the format above and complete the step. Do not continue analyzing once you have 7 issues.
+**STOP after 12 findings.** Output the format above and complete the step. Do not continue analyzing once you have 12 issues.
