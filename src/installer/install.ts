@@ -68,8 +68,9 @@ const DEFAULT_SESSION_MAINTENANCE = {
  * timeoutSeconds: heavy roles (coding, testing) get 30 min; lighter roles 20 min.
  * If a role has no timeoutSeconds, OpenClaw's global default (600s) applies.
  */
-const TIMEOUT_20_MIN = 1200;
-const TIMEOUT_30_MIN = 1800;
+const TIMEOUT_20_MIN = 1200; // review/analysis agents (Issue #335: lowered abandonment)
+const TIMEOUT_25_MIN = 1500; // coding/fix agents (Issue #335: reduced from 30min)
+const TIMEOUT_30_MIN = 1800; // testing/E2E agents (kept at 30min for full test suites)
 
 const ROLE_POLICIES: Record<AgentRole, { profile?: string; alsoAllow?: string[]; deny: string[]; timeoutSeconds: number }> = {
   // analysis: read code, run git/grep, reason — no writing, no web, no browser
@@ -92,7 +93,7 @@ const ROLE_POLICIES: Record<AgentRole, { profile?: string; alsoAllow?: string[];
       "image", "tts",                  // unnecessary
       "group:ui",                      // no browser/canvas
     ],
-    timeoutSeconds: TIMEOUT_30_MIN,  // implements code + build + tests
+    timeoutSeconds: TIMEOUT_25_MIN,  // Issue #335: reduced from 30→25min for fix agents
   },
 
   // verification: read + exec but NO write — preserves independent verification integrity
@@ -153,13 +154,21 @@ export function getMaxRoleTimeoutSeconds(): number {
   return Math.max(...Object.values(ROLE_POLICIES).map(r => r.timeoutSeconds));
 }
 
+/**
+ * Return the timeout (seconds) for a specific agent role.
+ * Used by step-ops for per-agent abandonment thresholds (Issue #335).
+ */
+export function getRoleTimeoutSeconds(role: AgentRole): number {
+  return ROLE_POLICIES[role]?.timeoutSeconds ?? getMaxRoleTimeoutSeconds();
+}
+
 const SUBAGENT_POLICY = { allowAgents: [] as string[] };
 
 /**
  * Infer an agent's role from its id when not explicitly set in workflow YAML.
  * Matches common agent id patterns across all bundled workflows.
  */
-function inferRole(agentId: string): AgentRole {
+export function inferRole(agentId: string): AgentRole {
   const id = agentId.toLowerCase();
   if (id.includes("planner") || id.includes("prioritizer") || id.includes("reviewer")
       || id.includes("investigator") || id.includes("triager")) return "analysis";

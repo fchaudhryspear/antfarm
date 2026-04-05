@@ -9,7 +9,7 @@ import { teardownWorkflowCronsIfIdle } from "./agent-cron.js";
 import { emitEvent } from "./events.js";
 import { logger } from "../lib/logger.js";
 import { sendSessionMessage } from "./gateway-api.js";
-import { getMaxRoleTimeoutSeconds } from "./install.js";
+import { getMaxRoleTimeoutSeconds, getRoleTimeoutSeconds, inferRole } from "./install.js";
 import { loadWorkflowSpec } from "./workflow-spec.js";
 import { resolveWorkflowDir } from "./paths.js";
 import { isFrontendChange } from "../lib/frontend-detect.js";
@@ -270,23 +270,44 @@ function parseAndInsertStories(output: string, runId: string): void {
 
 // ── Abandoned Step Cleanup ──────────────────────────────────────────
 
-const ABANDONED_THRESHOLD_MS = (getMaxRoleTimeoutSeconds() + 5 * 60) * 1000; // max role timeout + 5 min buffer
+// Issue #335: Per-role abandonment thresholds (review=20min, fix=25min, test=30min) + 5min buffer
+const ABANDONED_THRESHOLD_MS = (getMaxRoleTimeoutSeconds() + 5 * 60) * 1000; // fallback: max role timeout + 5 min buffer
 const MAX_ABANDON_RESETS = 5; // abandoned steps get more chances than explicit failures
+
+/**
+ * Compute the abandonment threshold for a specific agent based on its inferred role.
+ * Review/analysis agents: 20min + 5min buffer = 25min
+ * Coding/fix agents: 25min + 5min buffer = 30min
+ * Testing agents: 30min + 5min buffer = 35min
+ */
+function getAgentAbandonmentThresholdMs(agentId: string): number {
+  // Extract the local agent id (strip workflow prefix like "swarm-code-review-v3_")
+  const parts = agentId.split("_");
+  const localId = parts.length > 1 ? parts.slice(1).join("_") : agentId;
+  const role = inferRole(localId);
+  return (getRoleTimeoutSeconds(role) + 5 * 60) * 1000;
+}
 
 /**
  * Find steps that have been "running" for too long and reset them to pending.
  * This catches cases where an agent claimed a step but never completed/failed it.
  * Exported so it can be called from medic/health-check crons independently of claimStep.
+ *
+ * Issue #335: Uses per-agent role-based timeouts instead of a single global threshold.
  */
 export function cleanupAbandonedSteps(): void {
   const db = getDb();
-  // Use numeric comparison so mixed timestamp formats don't break ordering.
-  const thresholdMs = ABANDONED_THRESHOLD_MS;
 
-  // Find running steps that haven't been updated recently
-  const abandonedSteps = db.prepare(
-    "SELECT id, step_id, run_id, retry_count, max_retries, type, current_story_id, loop_config, abandoned_count FROM steps WHERE status = 'running' AND (julianday('now') - julianday(updated_at)) * 86400000 > ?"
-  ).all(thresholdMs) as { id: string; step_id: string; run_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; loop_config: string | null; abandoned_count: number }[];
+  // Query all running steps with their age in ms — filter per-agent below
+  const runningSteps = db.prepare(
+    "SELECT id, step_id, run_id, agent_id, retry_count, max_retries, type, current_story_id, loop_config, abandoned_count, (julianday('now') - julianday(updated_at)) * 86400000 AS age_ms FROM steps WHERE status = 'running'"
+  ).all() as { id: string; step_id: string; run_id: string; agent_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; loop_config: string | null; abandoned_count: number; age_ms: number }[];
+
+  // Filter to steps exceeding their role-specific threshold
+  const abandonedSteps = runningSteps.filter(step => {
+    const threshold = getAgentAbandonmentThresholdMs(step.agent_id);
+    return step.age_ms > threshold;
+  });
 
   for (const step of abandonedSteps) {
     if (step.type === "loop" && !step.current_story_id && step.loop_config) {
@@ -362,7 +383,7 @@ export function cleanupAbandonedSteps(): void {
   // Don't increment retry_count for abandonment; only explicit failStep() counts against retries
   const abandonedStories = db.prepare(
     "SELECT id, retry_count, max_retries, run_id FROM stories WHERE status = 'running' AND (julianday('now') - julianday(updated_at)) * 86400000 > ?"
-  ).all(thresholdMs) as { id: string; retry_count: number; max_retries: number; run_id: string }[];
+  ).all(ABANDONED_THRESHOLD_MS) as { id: string; retry_count: number; max_retries: number; run_id: string }[];
 
   for (const story of abandonedStories) {
     // Simply reset to pending without incrementing retry_count
