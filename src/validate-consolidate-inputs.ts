@@ -89,7 +89,7 @@ export function validateConsolidateInputs(runId: string, _consolidateOutput: str
   const db = getDb();
   const steps = db.prepare(
     "SELECT step_id, agent_id, output, status FROM steps WHERE run_id = ? AND step_id != 'consolidate' ORDER BY step_index ASC"
-  ).all(runId) as Step[];
+  ).all(runId) as unknown as Step[];
 
   const result = checkAllStepsPresent(steps);
   return {
