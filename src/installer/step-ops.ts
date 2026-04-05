@@ -17,6 +17,7 @@ import { isFrontendChange } from "../lib/frontend-detect.js";
 import { ping as heartbeatPing, clearSession as heartbeatClear } from "../heartbeat-service.js";
 import type { WorkflowStepFailure } from "./types.js";
 import { validateStepOutput } from "../validate-step-output.js";
+import { validateConsolidateInputs } from "../validate-consolidate-inputs.js";
 
 // ── Model Escalation on Retry ───────────────────────────────────────
 // When a step retries, escalate to a more capable model tier.
@@ -111,54 +112,7 @@ export function assignFindingOwners(findingsJson: string): Record<string, string
 }
 
 // ── Issue #340: Consolidate-PR Input Validation ──────────────────────
-// Critical domains: PR creation is blocked if any of these are missing output.
-// Non-critical domains: PR is allowed but a warning is appended.
-
-const CRITICAL_DOMAINS = new Set(["security", "backend", "frontend", "devops", "testing"]);
-const NON_CRITICAL_DOMAINS = new Set(["docs", "documentation", "ux", "product"]);
-
-/**
- * Check all completed steps in a run for empty/missing output.
- * Returns which domains are missing and whether PR should be blocked.
- */
-export function validateConsolidateInputs(runId: string, _consolidateOutput: string): {
-  blocked: boolean;
-  missingCritical: string[];
-  missingNonCritical: string[];
-  stepsChecked: number;
-} {
-  const db = getDb();
-  const steps = db.prepare(
-    "SELECT step_id, agent_id, output, status FROM steps WHERE run_id = ? AND step_id != 'consolidate' ORDER BY step_index ASC"
-  ).all(runId) as Array<{ step_id: string; agent_id: string; output: string | null; status: string }>;
-
-  const missingCritical: string[] = [];
-  const missingNonCritical: string[] = [];
-
-  for (const s of steps) {
-    const hasOutput = s.output && s.output.trim().length > 0;
-    if (hasOutput) continue;
-
-    // Derive domain from step_id or agent_id
-    const domain = s.step_id.replace(/^(fix-|review-|scan-)/, "").toLowerCase();
-
-    if (CRITICAL_DOMAINS.has(domain)) {
-      missingCritical.push(domain);
-    } else if (NON_CRITICAL_DOMAINS.has(domain)) {
-      missingNonCritical.push(domain);
-    } else {
-      // Unknown domain — treat as critical to be safe
-      missingCritical.push(domain);
-    }
-  }
-
-  return {
-    blocked: missingCritical.length > 0,
-    missingCritical,
-    missingNonCritical,
-    stepsChecked: steps.length,
-  };
-}
+// Now delegated to src/validate-consolidate-inputs.ts (imported at top).
 
 /**
  * Parse KEY: value lines from step output with support for multi-line values.
