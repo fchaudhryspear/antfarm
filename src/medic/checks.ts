@@ -3,6 +3,7 @@
  */
 import { getDb } from "../db.js";
 import { getMaxRoleTimeoutSeconds } from "../installer/install.js";
+import { getStaleSessions, markDead, pruneHeartbeats } from "../heartbeat-service.js";
 
 export type MedicSeverity = "info" | "warning" | "critical";
 export type MedicActionType =
@@ -196,6 +197,43 @@ export function checkOrphanedCrons(
   return findings;
 }
 
+// ── Check: Stale Sessions (Heartbeat) ────────────────────────────────
+
+const HEARTBEAT_STALE_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes without a ping
+
+/**
+ * Find sessions that haven't sent a heartbeat ping recently (Issue #339).
+ * Marks them dead and flags their steps for re-enqueue.
+ */
+export function checkStaleSessions(): MedicFinding[] {
+  const findings: MedicFinding[] = [];
+
+  try {
+    const stale = getStaleSessions(HEARTBEAT_STALE_THRESHOLD_MS);
+
+    for (const session of stale) {
+      markDead(session.sessionId);
+      const staleMin = Math.round(session.staleDurationMs / 60000);
+      findings.push({
+        check: "stale_sessions",
+        severity: "warning",
+        message: `Session "${session.sessionId}" has not sent a heartbeat for ${staleMin}min — marked dead`,
+        action: session.stepId ? "reset_step" : "none",
+        runId: session.runId ?? undefined,
+        stepId: session.stepId ?? undefined,
+        remediated: false,
+      });
+    }
+
+    // Periodic housekeeping: prune old heartbeat records
+    pruneHeartbeats();
+  } catch {
+    // best-effort — heartbeat table may not exist yet
+  }
+
+  return findings;
+}
+
 // ── Run All Checks ──────────────────────────────────────────────────
 
 /**
@@ -206,5 +244,6 @@ export function runSyncChecks(): MedicFinding[] {
     ...checkStuckSteps(),
     ...checkStalledRuns(),
     ...checkDeadRuns(),
+    ...checkStaleSessions(),
   ];
 }

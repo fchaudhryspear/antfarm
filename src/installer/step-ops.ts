@@ -13,12 +13,13 @@ import { getMaxRoleTimeoutSeconds } from "./install.js";
 import { loadWorkflowSpec } from "./workflow-spec.js";
 import { resolveWorkflowDir } from "./paths.js";
 import { isFrontendChange } from "../lib/frontend-detect.js";
+import { ping as heartbeatPing, clearSession as heartbeatClear } from "../heartbeat-service.js";
 import type { WorkflowStepFailure } from "./types.js";
 
 /**
  * Parse KEY: value lines from step output with support for multi-line values.
  * Accumulates continuation lines until the next KEY: boundary or end of output.
- * Returns a map of lowercase keys to their (trimmed) values.
+ * Returns a map of UPPER_SNAKE_CASE keys to their (trimmed) values.
  * Skips STORIES_JSON keys (handled separately).
  */
 export function parseOutputKeyValues(output: string): Record<string, string> {
@@ -29,7 +30,7 @@ export function parseOutputKeyValues(output: string): Record<string, string> {
 
   function commitPending() {
     if (pendingKey && !pendingKey.startsWith("STORIES_JSON")) {
-      result[pendingKey.toLowerCase()] = pendingValue.trim();
+      result[pendingKey] = pendingValue.trim(); // Bug #3: Keep UPPER_SNAKE_CASE
     }
     pendingKey = null;
     pendingValue = "";
@@ -81,27 +82,33 @@ function getWorkflowId(runId: string): string | undefined {
 
 /**
  * Resolve {{key}} placeholders in a template against a context object.
+ * Checks: exact match → lowercase match → UPPER_SNAKE_CASE match (for Bug #3 compatibility).
  */
 export function resolveTemplate(template: string, context: Record<string, string>): string {
-  return template.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_match, key: string) => {
-    if (key in context) return context[key];
+  return template.replace(/\{\{\s*([\w.-]+(?:\.[\w.-]+)*)(?:\s*\|[^}]+)?\s*\}\}/g, (_match: string, key: string) => {
+    if (key in context) return context[key]; // exact match
     const lower = key.toLowerCase();
-    if (lower in context) return context[lower];
+    if (lower in context) return context[lower]; // lowercase match
+    const upper = key.toUpperCase(); // Bug #3: UPPER_SNAKE_CASE compatibility
+    if (upper in context) return context[upper];
     return `[missing: ${key}]`;
   });
 }
 
 /**
  * Find missing template placeholders for a given context object.
+ * Checks: exact match → lowercase match → UPPER_SNAKE_CASE match (for Bug #3 compatibility).
  */
 function findMissingTemplateKeys(template: string, context: Record<string, string>): string[] {
   const missing: string[] = [];
   const seen = new Set<string>();
-  template.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_match, key: string) => {
+  template.replace(/\{\{([\w.-]+)\}\}/g, (_match, key: string) => {
     const lower = key.toLowerCase();
+    const upper = key.toUpperCase();
     const hasExact = Object.prototype.hasOwnProperty.call(context, key);
     const hasLower = Object.prototype.hasOwnProperty.call(context, lower);
-    if (!hasExact && !hasLower && !seen.has(lower)) {
+    const hasUpper = Object.prototype.hasOwnProperty.call(context, upper);
+    if (!hasExact && !hasLower && !hasUpper && !seen.has(lower)) {
       seen.add(lower);
       missing.push(lower);
     }
@@ -318,7 +325,8 @@ export function cleanupAbandonedSteps(): void {
         } else {
           db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(newRetry, story.id);
           db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = datetime('now') WHERE id = ?").run(step.id);
-          emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Story ${story.story_id} abandoned — reset to pending (story retry ${newRetry})` });
+          const reminderMsg = `⚠️ Retry ${newRetry}/${story.max_retries} — story "${story.story_id}" (${story.title}) was abandoned. Agent should review context and complete without dropping.`;
+          emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reminderMsg });
           logger.info(`Abandoned step reset to pending (story retry ${newRetry})`, { runId: step.run_id, stepId: step.step_id });
         }
         continue;
@@ -345,7 +353,8 @@ export function cleanupAbandonedSteps(): void {
       db.prepare(
         "UPDATE steps SET status = 'pending', abandoned_count = ?, updated_at = datetime('now') WHERE id = ?"
       ).run(newAbandonCount, step.id);
-      emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Reset to pending (abandon ${newAbandonCount}/${MAX_ABANDON_RESETS})` });
+      const reminderMsg = `⚠️ Retry ${newAbandonCount}/${MAX_ABANDON_RESETS} — step "${step.step_id}" was abandoned ${newAbandonCount} times. Agent should review context and complete without dropping.`;
+      emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: reminderMsg });
     }
   }
 
@@ -464,6 +473,23 @@ export function peekStep(agentId: string): PeekResult {
   return row.cnt > 0 ? "HAS_WORK" : "NO_WORK";
 }
 
+/**
+ * Check if an agent has any steps currently in 'running' or 'done' state.
+ * Used by cron dispatcher to detect if a step was already claimed by another cron instance.
+ * Returns 'running', 'done', or 'none'.
+ */
+export function getStepStatus(agentId: string): string {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT status FROM steps s
+     JOIN runs r ON r.id = s.run_id
+     WHERE s.agent_id = ? AND s.status IN ('running', 'done')
+       AND r.status = 'running'
+     LIMIT 1`
+  ).get(agentId) as { status: string } | undefined;
+  return row?.status ?? "none";
+}
+
 // ── Claim ───────────────────────────────────────────────────────────
 
 interface ClaimResult {
@@ -491,21 +517,44 @@ export function claimStep(agentId: string): ClaimResult {
   }
   const db = getDb();
 
-  const step = db.prepare(
-    `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.step_index
-     FROM steps s
-     JOIN runs r ON r.id = s.run_id
-     WHERE s.agent_id = ? AND s.status = 'pending'
-       AND r.status NOT IN ('failed', 'cancelled')
-       AND NOT EXISTS (
-         SELECT 1 FROM steps prev
-         WHERE prev.run_id = s.run_id
-           AND prev.step_index < s.step_index
-           AND prev.status NOT IN ('done', 'skipped')
-       )
-    ORDER BY s.step_index ASC, s.step_id ASC
-     LIMIT 1`
-  ).get(agentId) as {
+  // Parallel-aware claim: steps without depends_on in a parallel run are immediately
+  // claimable (no step_index gate). Steps with depends_on are gated by advancePipeline
+  // (they stay 'waiting' until deps resolve → 'pending'). Sequential runs (no depends_on
+  // on any step) fall back to step_index ordering.
+  //
+  // Two queries: first try parallel-aware (no step_index gate), then fall back to sequential.
+  const step = (
+    // Parallel path: find pending steps for this agent where the run has parallel steps
+    db.prepare(
+      `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.step_index
+       FROM steps s
+       JOIN runs r ON r.id = s.run_id
+       WHERE s.agent_id = ? AND s.status = 'pending'
+         AND r.status NOT IN ('failed', 'cancelled')
+         AND EXISTS (
+           SELECT 1 FROM steps p
+           WHERE p.run_id = s.run_id AND p.depends_on IS NOT NULL
+         )
+      ORDER BY s.step_index ASC, s.step_id ASC
+       LIMIT 1`
+    ).get(agentId) ??
+    // Sequential fallback: no parallel steps in run, enforce step_index ordering
+    db.prepare(
+      `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.step_index
+       FROM steps s
+       JOIN runs r ON r.id = s.run_id
+       WHERE s.agent_id = ? AND s.status = 'pending'
+         AND r.status NOT IN ('failed', 'cancelled')
+         AND NOT EXISTS (
+           SELECT 1 FROM steps prev
+           WHERE prev.run_id = s.run_id
+             AND prev.step_index < s.step_index
+             AND prev.status NOT IN ('done', 'skipped')
+         )
+      ORDER BY s.step_index ASC, s.step_id ASC
+       LIMIT 1`
+    ).get(agentId)
+  ) as {
     id: string; step_id: string; run_id: string; input_template: string; type: string;
     loop_config: string | null;
     step_index: number;
@@ -535,18 +584,17 @@ export function claimStep(agentId: string): ClaimResult {
   if (step.type === "loop") {
     const loopConfig: LoopConfig | null = step.loop_config ? JSON.parse(step.loop_config) : null;
     if (loopConfig?.over === "stories") {
+      // Check if run has stories — if not, complete gracefully (empty array = no work, not failure)
       if (!runHasStories(step.run_id)) {
-        const message = "Loop cannot run because planning did not produce STORIES_JSON.";
+        const message = "STORIES_JSON is empty — no items to process, marking step complete";
         db.prepare(
-          "UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?"
+          "UPDATE steps SET status = 'completed', output = ?, updated_at = datetime('now') WHERE id = ?"
         ).run(message, step.id);
-        db.prepare(
-          "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
-        ).run(step.run_id);
+        // Don't fail the run — just mark step complete and let next step proceed
         const wfId = getWorkflowId(step.run_id);
-        emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId, detail: message });
-        emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: message });
-        scheduleRunCronTeardown(step.run_id);
+        emitEvent({ ts: new Date().toISOString(), event: "step.completed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId, detail: message });
+        // Schedule cron teardown after delay (next step will claim or run will complete)
+        setTimeout(() => scheduleRunCronTeardown(step.run_id), 5000);
         return { found: false };
       }
 
@@ -636,6 +684,8 @@ export function claimStep(agentId: string): ClaimResult {
       db.prepare("UPDATE runs SET context = ?, updated_at = datetime('now') WHERE id = ?").run(JSON.stringify(context), step.run_id);
 
       const resolvedInput = resolveTemplate(step.input_template, context);
+      // Heartbeat: register session for liveness tracking (Issue #339)
+      heartbeatPing(agentId, step.id, step.run_id);
       return { found: true, stepId: step.id, runId: step.run_id, resolvedInput };
     }
   }
@@ -646,6 +696,8 @@ export function claimStep(agentId: string): ClaimResult {
   ).run(step.id);
   emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
   logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
+  // Heartbeat: register session for liveness tracking (Issue #339)
+  heartbeatPing(agentId, step.id, step.run_id);
 
   // Inject progress for any step in a run that has stories
   const hasStories = db.prepare(
@@ -685,6 +737,21 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
 
   if (!step) throw new Error(`Step not found: ${stepId}`);
 
+  // Heartbeat: clear session on completion (Issue #339)
+  const agentForHeartbeat = db.prepare("SELECT agent_id FROM steps WHERE id = ?").get(stepId) as { agent_id: string } | undefined;
+  if (agentForHeartbeat) heartbeatClear(agentForHeartbeat.agent_id);
+
+  // SCORE: / PR_URL: validation — reject non-consolidate steps that don't contain a valid completion marker
+  const isConsolidate = step.step_id === "consolidate";
+  const hasValidMarker = output && (output.includes("SCORE:") || output.includes("PR_URL:"));
+  if (!isConsolidate && output && !hasValidMarker) {
+    logger.warn(`Step ${step.step_id} output missing valid completion marker (SCORE: or PR_URL:) — rejecting and resetting to pending`, { runId: step.run_id, stepId: step.step_id });
+    db.prepare(
+      "UPDATE steps SET status = 'pending', output = NULL, updated_at = datetime('now') WHERE id = ?"
+    ).run(stepId);
+    return { advanced: false, runCompleted: false };
+  }
+
   // Guard: don't process completions for failed runs
   const runCheck = db.prepare("SELECT status FROM runs WHERE id = ?").get(step.run_id) as { status: string } | undefined;
   if (runCheck?.status === "failed") {
@@ -700,6 +767,12 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   for (const [key, value] of Object.entries(parsed)) {
     context[key] = value;
   }
+
+  // Bug #14 fix: namespace step output so downstream steps can reference it
+  context[`steps.${step.step_id}.output`] = output;
+  // Separate summary field: capped at 500 chars for consolidate's use.
+  // Full output is preserved in steps.X.output for agents that need complete context.
+  context[`steps.${step.step_id}.summary`] = String(output).slice(0, 800);
 
   db.prepare(
     "UPDATE runs SET context = ?, updated_at = datetime('now') WHERE id = ?"
@@ -919,34 +992,49 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
     return { advanced: false, runCompleted: false };
   }
 
-  const runningStep = db.prepare(
-    "SELECT id FROM steps WHERE run_id = ? AND status = 'running' LIMIT 1"
-  ).get(runId) as { id: string } | undefined;
-  if (runningStep) {
-    return { advanced: false, runCompleted: false };
-  }
-
-  const next = db.prepare(
-    "SELECT id, step_id FROM steps WHERE run_id = ? AND status = 'waiting' ORDER BY step_index ASC LIMIT 1"
-  ).get(runId) as { id: string; step_id: string } | undefined;
-
-  const incomplete = db.prepare(
-    "SELECT id FROM steps WHERE run_id = ? AND status IN ('failed', 'pending', 'running') LIMIT 1"
-  ).get(runId) as { id: string } | undefined;
-
-  if (!next && incomplete) {
-    return { advanced: false, runCompleted: false };
-  }
-
   const wfId = getWorkflowId(runId);
-  if (next) {
-    db.prepare(
-      "UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ?"
-    ).run(next.id);
-    emitEvent({ ts: new Date().toISOString(), event: "pipeline.advanced", runId, workflowId: wfId, stepId: next.step_id });
-    emitEvent({ ts: new Date().toISOString(), event: "step.pending", runId, workflowId: wfId, stepId: next.step_id });
+
+  // v4: Batch dispatch — find ALL waiting steps whose dependencies are satisfied
+  const waitingSteps = db.prepare(
+    "SELECT id, step_id, depends_on FROM steps WHERE run_id = ? AND status = 'waiting' ORDER BY step_index ASC"
+  ).all(runId) as Array<{ id: string; step_id: string; depends_on: string | null }>;
+
+  // Get all completed step IDs for dependency resolution
+  const doneStepIds = new Set(
+    (db.prepare("SELECT step_id FROM steps WHERE run_id = ? AND status = 'done'").all(runId) as Array<{ step_id: string }>).map(r => r.step_id)
+  );
+
+  // Find all steps ready to dispatch (no depends_on, or all deps satisfied)
+  const readySteps = waitingSteps.filter(step => {
+    if (!step.depends_on) return true;
+    try {
+      const deps = JSON.parse(step.depends_on) as string[];
+      return Array.isArray(deps) && deps.every(dep => doneStepIds.has(dep));
+    } catch {
+      // depends_on might be comma-separated string
+      const deps = step.depends_on.split(',').map(s => s.trim());
+      return deps.every(dep => doneStepIds.has(dep));
+    }
+  });
+
+  if (readySteps.length > 0) {
+    // Dispatch ALL ready steps at once
+    const updateStmt = db.prepare("UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ?");
+    for (const step of readySteps) {
+      updateStmt.run(step.id);
+      emitEvent({ ts: new Date().toISOString(), event: "pipeline.advanced", runId, workflowId: wfId, stepId: step.step_id });
+      emitEvent({ ts: new Date().toISOString(), event: "step.pending", runId, workflowId: wfId, stepId: step.step_id });
+    }
+    logger.info(`Pipeline advanced: dispatched ${readySteps.length} steps`, { runId, workflowId: wfId });
     return { advanced: true, runCompleted: false };
-  } else {
+  }
+
+  // No waiting steps ready — check if run is complete
+  const incomplete = db.prepare(
+    "SELECT id FROM steps WHERE run_id = ? AND status IN ('failed', 'pending', 'running', 'waiting') LIMIT 1"
+  ).get(runId) as { id: string } | undefined;
+
+  if (!incomplete) {
     db.prepare(
       "UPDATE runs SET status = 'completed', updated_at = datetime('now') WHERE id = ?"
     ).run(runId);
@@ -956,6 +1044,8 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
     scheduleRunCronTeardown(runId);
     return { advanced: false, runCompleted: true };
   }
+
+  return { advanced: false, runCompleted: false };
 }
 
 function resolveEscalationTarget(policy: WorkflowStepFailure | null): string | null {
