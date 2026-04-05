@@ -7,6 +7,7 @@
  * - markDead(sessionId): flags a session as dead for re-enqueue
  */
 import { getDb } from "./db.js";
+import { touchStepActivity } from "./installer/step-ops.js";
 
 // ── DB Migration ────────────────────────────────────────────────────
 
@@ -47,6 +48,11 @@ export function ping(sessionId: string, stepId?: string, runId?: string): void {
     db.prepare(
       "INSERT INTO session_heartbeats (session_id, step_id, run_id, last_ping_at, status, created_at) VALUES (?, ?, ?, ?, 'alive', ?)"
     ).run(sessionId, stepId ?? null, runId ?? null, now, now);
+  }
+
+  // Issue #342: Update step activity timestamp for stale session detection
+  if (stepId) {
+    try { touchStepActivity(stepId); } catch { /* best-effort */ }
   }
 }
 

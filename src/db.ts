@@ -88,6 +88,14 @@ function migrate(db: DatabaseSync): void {
   if (!colNames.has("escalated_model")) {
     db.exec("ALTER TABLE steps ADD COLUMN escalated_model TEXT");
   }
+  // Issue #341: Per-step timeout in minutes (overrides role-based default)
+  if (!colNames.has("timeout_minutes")) {
+    db.exec("ALTER TABLE steps ADD COLUMN timeout_minutes INTEGER");
+  }
+  // Issue #342: Track last output timestamp for stale session detection
+  if (!colNames.has("last_output_at")) {
+    db.exec("ALTER TABLE steps ADD COLUMN last_output_at TEXT");
+  }
 
   // Add columns to runs table for backwards compat
   const runCols = db.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;
