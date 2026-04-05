@@ -6,9 +6,10 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { execSync, execFileSync } from "node:child_process";
 import { teardownWorkflowCronsIfIdle } from "./agent-cron.js";
+import { buildWorkPrompt } from "./agent-cron.js";
 import { emitEvent } from "./events.js";
 import { logger } from "../lib/logger.js";
-import { sendSessionMessage } from "./gateway-api.js";
+import { sendSessionMessage, spawnAgentSession } from "./gateway-api.js";
 import { getMaxRoleTimeoutSeconds, getRoleTimeoutSeconds, inferRole } from "./install.js";
 import { loadWorkflowSpec } from "./workflow-spec.js";
 import { resolveWorkflowDir } from "./paths.js";
@@ -330,13 +331,17 @@ export function cleanupAbandonedSteps(): void {
   const db = getDb();
 
   // Query all running steps with their age in ms — filter per-agent below
+  // Issue #341: Also fetch timeout_minutes for per-step timeout override
   const runningSteps = db.prepare(
-    "SELECT id, step_id, run_id, agent_id, retry_count, max_retries, type, current_story_id, loop_config, abandoned_count, (julianday('now') - julianday(updated_at)) * 86400000 AS age_ms FROM steps WHERE status = 'running'"
-  ).all() as { id: string; step_id: string; run_id: string; agent_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; loop_config: string | null; abandoned_count: number; age_ms: number }[];
+    "SELECT id, step_id, run_id, agent_id, retry_count, max_retries, type, current_story_id, loop_config, abandoned_count, timeout_minutes, (julianday('now') - julianday(updated_at)) * 86400000 AS age_ms FROM steps WHERE status = 'running'"
+  ).all() as { id: string; step_id: string; run_id: string; agent_id: string; retry_count: number; max_retries: number; type: string; current_story_id: string | null; loop_config: string | null; abandoned_count: number; timeout_minutes: number | null; age_ms: number }[];
 
-  // Filter to steps exceeding their role-specific threshold
+  // Filter to steps exceeding their per-step or role-specific threshold
   const abandonedSteps = runningSteps.filter(step => {
-    const threshold = getAgentAbandonmentThresholdMs(step.agent_id);
+    // Issue #341: Per-step timeout_minutes takes priority over role-based default
+    const threshold = step.timeout_minutes
+      ? step.timeout_minutes * 60 * 1000
+      : getAgentAbandonmentThresholdMs(step.agent_id);
     return step.age_ms > threshold;
   });
 
@@ -377,7 +382,9 @@ export function cleanupAbandonedSteps(): void {
         } else {
           db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(newRetry, story.id);
           db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = datetime('now') WHERE id = ?").run(step.id);
-          const reminderMsg = `⚠️ Retry ${newRetry}/${story.max_retries} — story "${story.story_id}" (${story.title}) was abandoned. Agent should review context and complete without dropping.`;
+          const configuredTimeoutMin = step.timeout_minutes ?? Math.round(getAgentAbandonmentThresholdMs(step.agent_id) / 60000);
+          const actualDurationMin = Math.round(step.age_ms / 60000);
+          const reminderMsg = `⚠️ Retry ${newRetry}/${story.max_retries} — story "${story.story_id}" (${story.title}) timed out after ${actualDurationMin}min (limit: ${configuredTimeoutMin}min). Agent should review context and complete without dropping.`;
           emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reminderMsg });
           logger.info(`Abandoned step reset to pending (story retry ${newRetry})`, { runId: step.run_id, stepId: step.step_id });
         }
@@ -396,7 +403,9 @@ export function cleanupAbandonedSteps(): void {
         "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
       ).run(step.run_id);
       const wfId = getWorkflowId(step.run_id);
-      emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Retries exhausted — step failed` });
+      const configuredTimeoutMin = step.timeout_minutes ?? Math.round(getAgentAbandonmentThresholdMs(step.agent_id) / 60000);
+      const actualDurationMin = Math.round(step.age_ms / 60000);
+      emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Retries exhausted — step timed out after ${actualDurationMin}min (limit: ${configuredTimeoutMin}min)` });
       emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: "Agent abandoned step without completing" });
       emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "Step abandoned and retries exhausted" });
       scheduleRunCronTeardown(step.run_id);
@@ -408,7 +417,10 @@ export function cleanupAbandonedSteps(): void {
       // Model escalation on abandonment retry
       const escalatedModel = escalateStepModel(step.id);
       const escalationNote = escalatedModel ? ` Model escalated to ${escalatedModel}.` : "";
-      const reminderMsg = `⚠️ Retry ${newAbandonCount}/${MAX_ABANDON_RESETS} — step "${step.step_id}" was abandoned ${newAbandonCount} times.${escalationNote} Agent should review context and complete without dropping.`;
+      // Issue #341: Log timeout with actual duration vs configured timeout
+      const configuredTimeoutMin = step.timeout_minutes ?? Math.round(getAgentAbandonmentThresholdMs(step.agent_id) / 60000);
+      const actualDurationMin = Math.round(step.age_ms / 60000);
+      const reminderMsg = `⚠️ Retry ${newAbandonCount}/${MAX_ABANDON_RESETS} — step "${step.step_id}" timed out after ${actualDurationMin}min (limit: ${configuredTimeoutMin}min).${escalationNote} Agent should review context and complete without dropping.`;
       emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: reminderMsg });
     }
   }
@@ -443,7 +455,10 @@ export function cleanupAbandonedSteps(): void {
 
   for (const stuck of stuckLoops) {
     logger.info(`Recovering stuck pipeline after loop completion`, { runId: stuck.run_id, stepId: stuck.id });
-    advancePipeline(stuck.run_id);
+    const stuckResult = advancePipeline(stuck.run_id);
+    if (stuckResult.advanced && stuckResult.dispatchedAgentIds?.length) {
+      triggerImmediateStepEnqueue(stuckResult.dispatchedAgentIds, stuck.run_id);
+    }
   }
 }
 
@@ -500,6 +515,14 @@ function failStepWithMissingInputs(
   scheduleRunCronTeardown(runId);
 }
 
+// ── Issue #342: Session activity tracking ────────────────────────────
+// Update last_output_at to prove the agent session is still alive.
+// Called from heartbeat service and step completion paths.
+export function touchStepActivity(stepId: string): void {
+  const db = getDb();
+  db.prepare("UPDATE steps SET last_output_at = datetime('now') WHERE id = ?").run(stepId);
+}
+
 function runHasStories(runId: string): boolean {
   const db = getDb();
   const total = db.prepare(
@@ -529,20 +552,51 @@ export function peekStep(agentId: string): PeekResult {
 }
 
 /**
- * Check if an agent has any steps currently in 'running' or 'done' state.
+ * Check if an agent has any steps currently in 'running' state (actively being worked on).
  * Used by cron dispatcher to detect if a step was already claimed by another cron instance.
- * Returns 'running', 'done', or 'none'.
+ *
+ * Issue #342: Only block on 'running' steps that are actively producing output.
+ * - 'done' steps never block — they're finished.
+ * - 'pending' steps never block — they need to be claimed.
+ * - 'running' steps with stale sessions (no output in STALE_SESSION_THRESHOLD_MS)
+ *   are reset to 'pending' and don't block.
+ *
+ * Returns 'running' (actively in-progress), or 'none' (safe to claim).
  */
+const STALE_SESSION_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes — no output = stale
+
 export function getStepStatus(agentId: string): string {
   const db = getDb();
-  const row = db.prepare(
-    `SELECT status FROM steps s
+
+  // Find running steps for this agent in active runs
+  const runningSteps = db.prepare(
+    `SELECT s.id, s.step_id, s.run_id, s.last_output_at, s.updated_at,
+            (julianday('now') - julianday(COALESCE(s.last_output_at, s.updated_at))) * 86400000 AS idle_ms
+     FROM steps s
      JOIN runs r ON r.id = s.run_id
-     WHERE s.agent_id = ? AND s.status IN ('running', 'done')
-       AND r.status = 'running'
-     LIMIT 1`
-  ).get(agentId) as { status: string } | undefined;
-  return row?.status ?? "none";
+     WHERE s.agent_id = ? AND s.status = 'running'
+       AND r.status = 'running'`
+  ).all(agentId) as Array<{ id: string; step_id: string; run_id: string; last_output_at: string | null; updated_at: string; idle_ms: number }>;
+
+  if (runningSteps.length === 0) return "none";
+
+  // Check each running step — only block if actively producing output
+  for (const step of runningSteps) {
+    if (step.idle_ms < STALE_SESSION_THRESHOLD_MS) {
+      // Step is active — block the claim
+      return "running";
+    }
+
+    // Step is stale (no output in 3 min) — reset to pending for re-claim
+    db.prepare(
+      "UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ? AND status = 'running'"
+    ).run(step.id);
+    logger.info(`Stale session detected: step "${step.step_id}" idle for ${Math.round(step.idle_ms / 1000)}s — reset to pending`, { runId: step.run_id, stepId: step.step_id });
+    emitEvent({ ts: new Date().toISOString(), event: "step.pending", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Stale session reset: idle ${Math.round(step.idle_ms / 60000)}min` });
+  }
+
+  // All running steps were stale — safe to claim
+  return "none";
 }
 
 // ── Claim ───────────────────────────────────────────────────────────
@@ -685,7 +739,10 @@ export function claimStep(agentId: string): ClaimResult {
           "UPDATE steps SET status = 'done', updated_at = datetime('now') WHERE id = ?"
         ).run(step.id);
         emitEvent({ ts: new Date().toISOString(), event: "step.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
-        advancePipeline(step.run_id);
+        const loopAdvance = advancePipeline(step.run_id);
+        if (loopAdvance.advanced && loopAdvance.dispatchedAgentIds?.length) {
+          triggerImmediateStepEnqueue(loopAdvance.dispatchedAgentIds, step.run_id);
+        }
         return { found: false };
       }
 
@@ -693,8 +750,9 @@ export function claimStep(agentId: string): ClaimResult {
       db.prepare(
         "UPDATE stories SET status = 'running', updated_at = datetime('now') WHERE id = ?"
       ).run(nextStory.id);
+      // Issue #342: Set last_output_at on claim for stale session detection
       db.prepare(
-        "UPDATE steps SET status = 'running', current_story_id = ?, updated_at = datetime('now') WHERE id = ?"
+        "UPDATE steps SET status = 'running', current_story_id = ?, last_output_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
       ).run(nextStory.id, step.id);
 
       const wfId = getWorkflowId(step.run_id);
@@ -748,8 +806,9 @@ export function claimStep(agentId: string): ClaimResult {
   }
 
   // Single step: existing logic
+  // Issue #342: Set last_output_at on claim for stale session detection
   db.prepare(
-    "UPDATE steps SET status = 'running', updated_at = datetime('now') WHERE id = ? AND status = 'pending'"
+    "UPDATE steps SET status = 'running', last_output_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND status = 'pending'"
   ).run(step.id);
   emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
   logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
@@ -901,7 +960,14 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   emitEvent({ ts: new Date().toISOString(), event: "step.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id });
   logger.info(`Step completed: ${step.step_id}`, { runId: step.run_id, stepId: step.step_id });
 
-  return advancePipeline(step.run_id);
+  const result = advancePipeline(step.run_id);
+
+  // Issue #336: Event-driven — immediately enqueue newly-unblocked steps
+  if (result.advanced && result.dispatchedAgentIds?.length) {
+    triggerImmediateStepEnqueue(result.dispatchedAgentIds, step.run_id);
+  }
+
+  return result;
 }
 
 /**
@@ -1034,14 +1100,18 @@ function checkLoopContinuation(runId: string, loopStepId: string): { advanced: b
     }
   }
 
-  return advancePipeline(runId);
+  const loopResult = advancePipeline(runId);
+  if (loopResult.advanced && loopResult.dispatchedAgentIds?.length) {
+    triggerImmediateStepEnqueue(loopResult.dispatchedAgentIds, runId);
+  }
+  return loopResult;
 }
 
 /**
  * Advance the pipeline: find the next waiting step and make it pending, or complete the run.
  * Respects terminal run states — a failed run cannot be advanced or completed.
  */
-function advancePipeline(runId: string): { advanced: boolean; runCompleted: boolean } {
+function advancePipeline(runId: string): { advanced: boolean; runCompleted: boolean; dispatchedAgentIds?: string[] } {
   const db = getDb();
 
   // Guard: don't advance or complete a run that's already failed/cancelled
@@ -1054,8 +1124,8 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
 
   // v4: Batch dispatch — find ALL waiting steps whose dependencies are satisfied
   const waitingSteps = db.prepare(
-    "SELECT id, step_id, depends_on FROM steps WHERE run_id = ? AND status = 'waiting' ORDER BY step_index ASC"
-  ).all(runId) as Array<{ id: string; step_id: string; depends_on: string | null }>;
+    "SELECT id, step_id, agent_id, depends_on FROM steps WHERE run_id = ? AND status = 'waiting' ORDER BY step_index ASC"
+  ).all(runId) as Array<{ id: string; step_id: string; agent_id: string; depends_on: string | null }>;
 
   // Get all completed step IDs for dependency resolution
   const doneStepIds = new Set(
@@ -1078,13 +1148,15 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
   if (readySteps.length > 0) {
     // Dispatch ALL ready steps at once
     const updateStmt = db.prepare("UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ?");
+    const dispatchedAgentIds: string[] = [];
     for (const step of readySteps) {
       updateStmt.run(step.id);
+      dispatchedAgentIds.push(step.agent_id);
       emitEvent({ ts: new Date().toISOString(), event: "pipeline.advanced", runId, workflowId: wfId, stepId: step.step_id });
       emitEvent({ ts: new Date().toISOString(), event: "step.pending", runId, workflowId: wfId, stepId: step.step_id });
     }
     logger.info(`Pipeline advanced: dispatched ${readySteps.length} steps`, { runId, workflowId: wfId });
-    return { advanced: true, runCompleted: false };
+    return { advanced: true, runCompleted: false, dispatchedAgentIds };
   }
 
   // No waiting steps ready — check if run is complete
@@ -1104,6 +1176,55 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
   }
 
   return { advanced: false, runCompleted: false };
+}
+
+// ── Issue #336: Event-driven step triggering ──────────────────────────
+// After advancePipeline dispatches steps to 'pending', immediately claim
+// and spawn sessions for each unblocked agent instead of waiting for cron.
+
+function triggerImmediateStepEnqueue(dispatchedAgentIds: string[], runId: string): void {
+  // Deduplicate agent IDs (multiple steps may share an agent)
+  const uniqueAgents = [...new Set(dispatchedAgentIds)];
+  const wfId = getWorkflowId(runId);
+
+  for (const agentId of uniqueAgents) {
+    // Fire-and-forget: claim step and spawn session in background
+    // This runs async — if it fails, the regular cron will pick it up within 60s
+    setImmediate(async () => {
+      try {
+        const claim = claimStep(agentId);
+        if (!claim.found || !claim.stepId || !claim.resolvedInput) return;
+
+        // Extract workflow and local agent ID from composite agentId (e.g. "swarm-code-review-v3_code-quality")
+        const underscoreIdx = agentId.indexOf("_");
+        const workflowId = underscoreIdx > 0 ? agentId.slice(0, underscoreIdx) : agentId;
+        const localAgentId = underscoreIdx > 0 ? agentId.slice(underscoreIdx + 1) : agentId;
+
+        const workPrompt = buildWorkPrompt(workflowId, localAgentId);
+        const task = `${workPrompt}\n\nCLAIMED STEP JSON:\n${JSON.stringify({ stepId: claim.stepId, runId: claim.runId, input: claim.resolvedInput })}`;
+
+        const result = await spawnAgentSession({
+          agentId,
+          model: claim.escalatedModel ?? undefined,
+          task,
+          timeoutSeconds: 1800,
+        });
+
+        if (result.ok) {
+          logger.info(`Event-driven spawn: agent ${localAgentId} started immediately`, { runId, stepId: claim.stepId });
+          emitEvent({ ts: new Date().toISOString(), event: "step.completed", runId, workflowId: wfId, stepId: localAgentId, detail: "Event-driven: session spawned without cron delay" });
+        } else {
+          // Spawn failed — reset step to pending so cron can pick it up
+          logger.warn(`Event-driven spawn failed for ${localAgentId}: ${result.error}`, { runId });
+          const db = getDb();
+          db.prepare("UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ? AND status = 'running'").run(claim.stepId);
+        }
+      } catch (err) {
+        logger.warn(`Event-driven enqueue error for ${agentId}: ${err}`, { runId });
+        // Non-fatal: cron will pick up the pending step on next tick
+      }
+    });
+  }
 }
 
 function resolveEscalationTarget(policy: WorkflowStepFailure | null): string | null {
