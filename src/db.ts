@@ -97,6 +97,17 @@ function migrate(db: DatabaseSync): void {
     db.exec("ALTER TABLE steps ADD COLUMN last_output_at TEXT");
   }
 
+  // Issue #343: Agent retry stats table for prompt tuning framework
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_stats (
+      agent_id TEXT PRIMARY KEY,
+      total_runs INTEGER NOT NULL DEFAULT 0,
+      retries INTEGER NOT NULL DEFAULT 0,
+      last_run_at TEXT,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
   // Add columns to runs table for backwards compat
   const runCols = db.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>;
   const runColNames = new Set(runCols.map((c) => c.name));

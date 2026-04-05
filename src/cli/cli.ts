@@ -23,7 +23,7 @@ import { listBundledWorkflows } from "../installer/workflow-fetch.js";
 import { readRecentLogs } from "../lib/logger.js";
 import { getRecentEvents, getRunEvents, type AntfarmEvent } from "../installer/events.js";
 import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/daemonctl.js";
-import { claimStep, completeStep, failStep, getStories, peekStep, getStepStatus } from "../installer/step-ops.js";
+import { claimStep, completeStep, failStep, getStories, peekStep, getStepStatus, getAgentStats } from "../installer/step-ops.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
 import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
 import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
@@ -119,6 +119,8 @@ function printUsage() {
       "antfarm medic run [--json]           Run medic check now (manual trigger)",
       "antfarm medic status                 Show medic health summary",
       "antfarm medic log [<count>]          Show recent medic check history",
+      "",
+      "antfarm agent-stats [--agent <name>]  Show agent retry rates (flags >10%)",
       "",
       "antfarm logs [<lines>]               Show recent activity (from events)",
       "antfarm logs <run-id>                Show activity for a specific run",
@@ -440,6 +442,34 @@ async function main() {
     process.stderr.write(`Unknown step action: ${action}\n`);
     printUsage();
     process.exit(1);
+  }
+
+  // Issue #343: Agent retry stats CLI command
+  if (group === "agent-stats") {
+    let agentFilter: string | undefined;
+    const agentIdx = args.indexOf("--agent");
+    if (agentIdx !== -1 && args[agentIdx + 1]) {
+      agentFilter = args[agentIdx + 1];
+    }
+    const stats = getAgentStats(agentFilter);
+    if (stats.length === 0) {
+      console.log(agentFilter ? `No stats found for agent matching "${agentFilter}".` : "No agent stats recorded yet.");
+      return;
+    }
+    console.log("Agent Retry Stats:");
+    console.log(`${"Agent".padEnd(40)} ${"Runs".padStart(6)} ${"Retries".padStart(8)} ${"Rate".padStart(7)}  Status`);
+    console.log("-".repeat(75));
+    for (const s of stats) {
+      const flag = s.flagged ? " ⚠ >10% retry rate" : "";
+      const shortId = s.agent_id.length > 38 ? "…" + s.agent_id.slice(-37) : s.agent_id;
+      console.log(`${shortId.padEnd(40)} ${String(s.total_runs).padStart(6)} ${String(s.retries).padStart(8)} ${(s.retry_rate + "%").padStart(7)}  ${flag}`);
+    }
+    const flagged = stats.filter((s) => s.flagged);
+    if (flagged.length > 0) {
+      console.log(`\n⚠ ${flagged.length} agent(s) with >10% retry rate — consider prompt hardening.`);
+      console.log("  See: docs/agent-prompt-guidelines.md");
+    }
+    return;
   }
 
   if (group === "logs") {

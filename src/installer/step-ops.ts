@@ -1,5 +1,5 @@
 import { getDb } from "../db.js";
-import type { LoopConfig, Story } from "./types.js";
+import type { AgentRole, LoopConfig, Story } from "./types.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -46,6 +46,145 @@ function escalateStepModel(stepId: string): string | null {
     db.prepare("UPDATE steps SET escalated_model = ? WHERE id = ?").run(newModel, stepId);
   }
   return newModel;
+}
+
+// ── Issue #337: Output Schema Enforcement ────────────────────────────
+// Minimum required output fields per agent role. If a step's output is
+// empty or missing required fields, it auto-fails with retry.
+
+const ROLE_REQUIRED_FIELDS: Record<AgentRole, string[]> = {
+  analysis:     ["STATUS", "SCORE", "FINDINGS"],
+  coding:       ["STATUS", "CHANGES", "FILES_MODIFIED"],
+  verification: ["STATUS", "SCORE", "FINDINGS"],
+  testing:      ["STATUS", "SCORE", "FINDINGS"],
+  pr:           ["STATUS", "PR_URL"],
+  scanning:     ["STATUS", "SCORE", "FINDINGS"],
+};
+
+/**
+ * Validate step output against the required schema for the agent's role.
+ * Returns { valid: true } or { valid: false, missing: [...], reason: "..." }.
+ */
+export function validateOutputSchema(
+  output: string,
+  agentId: string,
+): { valid: true } | { valid: false; missing: string[]; reason: string } {
+  if (!output || output.trim().length === 0) {
+    return { valid: false, missing: ["*"], reason: "Output is empty" };
+  }
+
+  // Derive role from agent ID (strip workflow prefix)
+  const underscoreIdx = agentId.indexOf("_");
+  const localId = underscoreIdx > 0 ? agentId.slice(underscoreIdx + 1) : agentId;
+  const role = inferRole(localId);
+  const requiredFields = ROLE_REQUIRED_FIELDS[role];
+  if (!requiredFields || requiredFields.length === 0) return { valid: true };
+
+  const parsed = parseOutputKeyValues(output);
+  const presentKeys = new Set(Object.keys(parsed));
+
+  const missing = requiredFields.filter((field) => !presentKeys.has(field));
+  if (missing.length > 0) {
+    return {
+      valid: false,
+      missing,
+      reason: `Missing required fields for role "${role}": ${missing.join(", ")}`,
+    };
+  }
+  return { valid: true };
+}
+
+// ── Issue #338: Single-Owner Finding Assignment ─────────────────────
+// After setup agent gathers findings, assign each finding to exactly ONE
+// domain owner to prevent duplicate work (e.g. both fix-security and
+// fix-backend fixing the same race condition on a shared file).
+
+// Domain → fix agent mapping
+const DOMAIN_TO_FIX_AGENT: Record<string, string> = {
+  "security": "fix-security",
+  "backend": "fix-backend",
+  "frontend": "fix-frontend",
+  "performance": "fix-performance",
+  "testing": "fix-testing",
+  "code-quality": "fix-code-quality",
+  "devops": "fix-devops",
+  "ux": "fix-ux",
+  "documentation": "fix-documentation",
+  "product": "fix-product",
+};
+
+/**
+ * Assign each finding to exactly ONE fix agent based on its primary domain.
+ * For findings that appear in multiple domains (shared_file or related_findings),
+ * the finding's own domain field is authoritative — only the primary domain owner fixes it.
+ * Returns a FINDING_OWNER map: { finding_id: 'fix-security', ... }
+ */
+export function assignFindingOwners(findingsJson: string): Record<string, string> {
+  const ownerMap: Record<string, string> = {};
+  try {
+    const data = JSON.parse(findingsJson);
+    const findings = Array.isArray(data) ? data : (data.findings ?? []);
+
+    for (const finding of findings) {
+      if (!finding.finding_id || !finding.domain) continue;
+      // Each finding is assigned to exactly ONE owner based on its domain field
+      const owner = DOMAIN_TO_FIX_AGENT[finding.domain] ?? `fix-${finding.domain}`;
+      ownerMap[finding.finding_id] = owner;
+    }
+  } catch {
+    // If findings aren't valid JSON, return empty map (freetext fallback)
+  }
+  return ownerMap;
+}
+
+// ── Issue #340: Consolidate-PR Input Validation ──────────────────────
+// Critical domains: PR creation is blocked if any of these are missing output.
+// Non-critical domains: PR is allowed but a warning is appended.
+
+const CRITICAL_DOMAINS = new Set(["security", "backend", "frontend", "devops", "testing"]);
+const NON_CRITICAL_DOMAINS = new Set(["docs", "documentation", "ux", "product"]);
+
+/**
+ * Check all completed steps in a run for empty/missing output.
+ * Returns which domains are missing and whether PR should be blocked.
+ */
+export function validateConsolidateInputs(runId: string, _consolidateOutput: string): {
+  blocked: boolean;
+  missingCritical: string[];
+  missingNonCritical: string[];
+  stepsChecked: number;
+} {
+  const db = getDb();
+  const steps = db.prepare(
+    "SELECT step_id, agent_id, output, status FROM steps WHERE run_id = ? AND step_id != 'consolidate' ORDER BY step_index ASC"
+  ).all(runId) as Array<{ step_id: string; agent_id: string; output: string | null; status: string }>;
+
+  const missingCritical: string[] = [];
+  const missingNonCritical: string[] = [];
+
+  for (const s of steps) {
+    const hasOutput = s.output && s.output.trim().length > 0;
+    if (hasOutput) continue;
+
+    // Derive domain from step_id or agent_id
+    const domain = s.step_id.replace(/^(fix-|review-|scan-)/, "").toLowerCase();
+
+    if (CRITICAL_DOMAINS.has(domain)) {
+      missingCritical.push(domain);
+    } else if (NON_CRITICAL_DOMAINS.has(domain)) {
+      missingNonCritical.push(domain);
+    } else {
+      // Unknown domain — treat as critical to be safe
+      missingCritical.push(domain);
+    }
+  }
+
+  return {
+    blocked: missingCritical.length > 0,
+    missingCritical,
+    missingNonCritical,
+    stepsChecked: steps.length,
+  };
 }
 
 /**
@@ -829,7 +968,20 @@ export function claimStep(agentId: string): ClaimResult {
     return { found: false };
   }
 
-  const resolvedInput = resolveTemplate(step.input_template, context);
+  let resolvedInput = resolveTemplate(step.input_template, context);
+
+  // Issue #338: Inject finding ownership filter for fix agents
+  if (step.step_id.startsWith("fix-") && context["FINDING_OWNER"]) {
+    try {
+      const ownerMap: Record<string, string> = JSON.parse(context["FINDING_OWNER"]);
+      const myFindings = Object.entries(ownerMap)
+        .filter(([, owner]) => owner === step.step_id)
+        .map(([findingId]) => findingId);
+      resolvedInput += `\n\n--- FINDING OWNERSHIP (Issue #338) ---\nYou are the SOLE OWNER of these findings. Only fix findings in YOUR_FINDINGS list.\nYOUR_FINDINGS: ${JSON.stringify(myFindings)}\nFINDING_OWNER_MAP: ${context["FINDING_OWNER"]}\nDo NOT fix findings assigned to other agents.`;
+    } catch {
+      // Non-fatal: if FINDING_OWNER is malformed, let agent process normally
+    }
+  }
 
   return {
     found: true,
@@ -869,6 +1021,52 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     return { advanced: false, runCompleted: false };
   }
 
+  // Issue #337: Output schema enforcement — validate required fields per role.
+  // Consolidate steps are exempt (they have their own validation in P2 Fix 2).
+  if (!isConsolidate) {
+    const agentRow = db.prepare("SELECT agent_id FROM steps WHERE id = ?").get(stepId) as { agent_id: string } | undefined;
+    const schemaResult = validateOutputSchema(output, agentRow?.agent_id ?? "");
+    if (!schemaResult.valid) {
+      const retryRow = db.prepare("SELECT retry_count, max_retries FROM steps WHERE id = ?").get(stepId) as { retry_count: number; max_retries: number };
+      const newRetry = retryRow.retry_count + 1;
+      logger.warn(`Issue #337: Output schema validation failed for step ${step.step_id}: ${schemaResult.reason} [missing: ${schemaResult.missing.join(",")}] (retry ${newRetry}/${retryRow.max_retries})`, { runId: step.run_id, stepId: step.step_id });
+      emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Schema validation failed: ${schemaResult.reason}` });
+      if (newRetry > retryRow.max_retries) {
+        // Retries exhausted — fail step and run
+        db.prepare("UPDATE steps SET status = 'failed', output = ?, retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(`Schema validation failed: ${schemaResult.reason}`, newRetry, stepId);
+        db.prepare("UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?").run(step.run_id);
+        emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), detail: `Output schema retries exhausted for ${step.step_id}` });
+        scheduleRunCronTeardown(step.run_id);
+        return { advanced: false, runCompleted: false };
+      }
+      // Auto-retry: reset to pending with incremented retry count + model escalation
+      db.prepare("UPDATE steps SET status = 'pending', output = NULL, retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(newRetry, stepId);
+      escalateStepModel(stepId);
+      return { advanced: false, runCompleted: false };
+    }
+  }
+
+  // Issue #340: Consolidate-PR input validation — check all prior step outputs
+  if (isConsolidate) {
+    const consolidateValidation = validateConsolidateInputs(step.run_id, output);
+    if (consolidateValidation.blocked) {
+      logger.warn(`Issue #340: Consolidate-PR blocked — critical domains missing: ${consolidateValidation.missingCritical.join(", ")}`, { runId: step.run_id, stepId: step.step_id });
+      emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `PR blocked: missing critical domains: ${consolidateValidation.missingCritical.join(", ")}` });
+      // Inject missing_inputs into output and fail step
+      const failOutput = output + `\nMISSING_INPUTS: ${JSON.stringify({ critical: consolidateValidation.missingCritical, non_critical: consolidateValidation.missingNonCritical })}`;
+      db.prepare("UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?").run(failOutput, stepId);
+      db.prepare("UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?").run(step.run_id);
+      emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), detail: "Consolidate-PR blocked: critical domain outputs missing" });
+      scheduleRunCronTeardown(step.run_id);
+      return { advanced: false, runCompleted: false };
+    }
+    // Non-critical warnings: append to output but allow PR creation
+    if (consolidateValidation.missingNonCritical.length > 0) {
+      logger.warn(`Issue #340: Consolidate-PR proceeding with warnings — non-critical domains missing: ${consolidateValidation.missingNonCritical.join(", ")}`, { runId: step.run_id, stepId: step.step_id });
+      output += `\nMISSING_INPUTS: ${JSON.stringify({ critical: [], non_critical: consolidateValidation.missingNonCritical })}`;
+    }
+  }
+
   // Guard: don't process completions for failed runs
   const runCheck = db.prepare("SELECT status FROM runs WHERE id = ?").get(step.run_id) as { status: string } | undefined;
   if (runCheck?.status === "failed") {
@@ -890,6 +1088,19 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   // Separate summary field: capped at 500 chars for consolidate's use.
   // Full output is preserved in steps.X.output for agents that need complete context.
   context[`steps.${step.step_id}.summary`] = String(output).slice(0, 800);
+
+  // Issue #338: Single-owner finding assignment — after setup step, assign each finding to one fix agent
+  if (step.step_id === "setup" || step.step_id.endsWith("-setup")) {
+    // Look for STRUCTURED_FINDINGS_JSON in the run context (injected by review swarm)
+    const findingsJson = context["STRUCTURED_FINDINGS_JSON"] ?? context["structured_findings_json"] ?? "";
+    if (findingsJson) {
+      const ownerMap = assignFindingOwners(findingsJson);
+      if (Object.keys(ownerMap).length > 0) {
+        context["FINDING_OWNER"] = JSON.stringify(ownerMap);
+        logger.info(`Issue #338: Assigned ${Object.keys(ownerMap).length} findings to single owners`, { runId: step.run_id, stepId: step.step_id });
+      }
+    }
+  }
 
   db.prepare(
     "UPDATE runs SET context = ?, updated_at = datetime('now') WHERE id = ?"
@@ -959,6 +1170,9 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   ).run(output, stepId);
   emitEvent({ ts: new Date().toISOString(), event: "step.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id });
   logger.info(`Step completed: ${step.step_id}`, { runId: step.run_id, stepId: step.step_id });
+  // Issue #343: Record successful run for agent stats
+  const agentForStats = db.prepare("SELECT agent_id FROM steps WHERE id = ?").get(stepId) as { agent_id: string } | undefined;
+  if (agentForStats) recordAgentRun(agentForStats.agent_id);
 
   const result = advancePipeline(step.run_id);
 
@@ -1305,10 +1519,11 @@ export async function failStep(stepId: string, error: string): Promise<{ retryin
   const db = getDb();
 
   const step = db.prepare(
-    "SELECT run_id, step_id, retry_count, max_retries, type, current_story_id FROM steps WHERE id = ?"
+    "SELECT run_id, step_id, agent_id, retry_count, max_retries, type, current_story_id FROM steps WHERE id = ?"
   ).get(stepId) as {
     run_id: string;
     step_id: string;
+    agent_id: string;
     retry_count: number;
     max_retries: number;
     type: string;
@@ -1348,6 +1563,8 @@ export async function failStep(stepId: string, error: string): Promise<{ retryin
         logger.info(`Model escalated to "${escalatedModel}" on story retry ${newRetry}`, { runId: step.run_id, stepId: step.step_id });
         emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Model escalated to ${escalatedModel} on retry` });
       }
+      // Issue #343: Record retry in agent stats
+      recordAgentRetry(step.agent_id);
       return { retrying: true, runFailed: false };
     }
   }
@@ -1378,6 +1595,80 @@ export async function failStep(stepId: string, error: string): Promise<{ retryin
       logger.info(`Model escalated to "${escalatedModel}" on retry ${newRetryCount}`, { runId: step.run_id, stepId: step.step_id });
       emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Model escalated to ${escalatedModel} on retry ${newRetryCount}` });
     }
+    // Issue #343: Record retry in agent stats
+    recordAgentRetry(step.agent_id);
     return { retrying: true, runFailed: false };
   }
+}
+
+// ── Issue #343: Agent Retry Stats (Prompt Tuning Framework) ──────────
+
+/**
+ * Record a successful step completion for an agent.
+ */
+export function recordAgentRun(agentId: string): void {
+  try {
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO agent_stats (agent_id, total_runs, retries, last_run_at, updated_at)
+      VALUES (?, 1, 0, datetime('now'), datetime('now'))
+      ON CONFLICT(agent_id) DO UPDATE SET
+        total_runs = total_runs + 1,
+        last_run_at = datetime('now'),
+        updated_at = datetime('now')
+    `).run(agentId);
+  } catch { /* best-effort stats tracking */ }
+}
+
+/**
+ * Record a retry event for an agent.
+ */
+export function recordAgentRetry(agentId: string): void {
+  try {
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO agent_stats (agent_id, total_runs, retries, last_run_at, updated_at)
+      VALUES (?, 1, 1, datetime('now'), datetime('now'))
+      ON CONFLICT(agent_id) DO UPDATE SET
+        total_runs = total_runs + 1,
+        retries = retries + 1,
+        last_run_at = datetime('now'),
+        updated_at = datetime('now')
+    `).run(agentId);
+  } catch { /* best-effort stats tracking */ }
+}
+
+/**
+ * Get retry stats for all agents or a specific agent.
+ * Returns agents sorted by retry rate descending.
+ */
+export function getAgentStats(agentFilter?: string): Array<{
+  agent_id: string;
+  total_runs: number;
+  retries: number;
+  retry_rate: number;
+  last_run_at: string | null;
+  flagged: boolean;
+}> {
+  const db = getDb();
+  let rows: Array<{ agent_id: string; total_runs: number; retries: number; last_run_at: string | null }>;
+
+  if (agentFilter) {
+    rows = db.prepare(
+      "SELECT agent_id, total_runs, retries, last_run_at FROM agent_stats WHERE agent_id LIKE ? ORDER BY CAST(retries AS REAL) / MAX(total_runs, 1) DESC"
+    ).all(`%${agentFilter}%`) as typeof rows;
+  } else {
+    rows = db.prepare(
+      "SELECT agent_id, total_runs, retries, last_run_at FROM agent_stats ORDER BY CAST(retries AS REAL) / MAX(total_runs, 1) DESC"
+    ).all() as typeof rows;
+  }
+
+  return rows.map((r) => {
+    const retryRate = r.total_runs > 0 ? r.retries / r.total_runs : 0;
+    return {
+      ...r,
+      retry_rate: Math.round(retryRate * 1000) / 10, // percentage with 1 decimal
+      flagged: retryRate > 0.10, // >10% retry rate
+    };
+  });
 }
