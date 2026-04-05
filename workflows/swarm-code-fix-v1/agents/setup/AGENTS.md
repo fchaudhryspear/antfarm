@@ -118,7 +118,27 @@ SHARED_FILES: backend/lambdas/api-handler/lambda_function.py (security+backend+t
   .github/workflows/ci.yml (devops+testing)
 ```
 
-### Part 4 — Per-Domain Finding Summary (JSON mode only)
+### Part 4 — Single-Owner Finding Assignment (Issue #338)
+
+After gathering findings, assign each finding to exactly ONE domain owner.
+This prevents duplicate fix work across agents (e.g. both fix-security and
+fix-backend fixing the same race condition on a shared file).
+
+**Rules:**
+- Each finding's `domain` field is authoritative — only the primary domain owner fixes it
+- For findings touching shared files, the finding's own domain still determines the owner
+- Output `FINDING_OWNER_MAP` as JSON mapping each finding ID to its fix agent
+
+**Example (JSON mode):**
+```
+FINDING_OWNER_MAP: {"SEC-001": "fix-security", "SEC-002": "fix-security", "BE-001": "fix-backend", "FE-001": "fix-frontend"}
+```
+
+Each fix agent will only process findings where it is the assigned owner.
+The pipeline enforces this automatically — agents receive a `YOUR_FINDINGS` filter
+listing only the finding IDs they own.
+
+### Part 5 — Per-Domain Finding Summary (JSON mode only)
 
 If FINDINGS_FORMAT is json, output a quick routing summary:
 ```
@@ -144,5 +164,12 @@ inter-fixer merge conflicts before they happen.
 SETUP_OK: branch={{ branch }} repo={{ repo_path }}
 SHARED_FILES: <list with domain annotations, or "none">
 FINDINGS_FORMAT: json | freetext
+FINDING_OWNER_MAP: {"finding_id": "fix-security", ...}
 DOMAIN_ROUTING: <per-domain finding count + IDs, only if json format>
+```
+
+**IMPORTANT:** The `FINDING_OWNER_MAP` ensures each finding is fixed by exactly one agent.
+If you cannot produce a JSON owner map (e.g. freetext findings without IDs), output:
+```
+FINDING_OWNER_MAP: {}
 ```
