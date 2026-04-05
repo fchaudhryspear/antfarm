@@ -21,9 +21,14 @@ import { validateConsolidateInputs } from "../validate-consolidate-inputs.js";
 import { recordAgentRun, recordAgentRetry, getAgentStats } from "../agent-retry-stats.js";
 
 // ── Model Escalation on Retry ───────────────────────────────────────
-// When a step retries, escalate to a more capable model tier.
-// Order: default → sonnet → opus (most capable).
-const MODEL_ESCALATION_TIERS = ["default", "sonnet", "opus"];
+// When a step retries, escalate to the next more capable Ollama Cloud model.
+// Entirely within the existing Ollama Cloud roster — no Anthropic dependency.
+const MODEL_ESCALATION_TIERS = [
+  "minimax-m2.7",
+  "ollama-cloud/qwen3.5:397b-cloud",
+  "ollama-cloud/kimi-k2.5:cloud",
+  "ollama-cloud/devstral-2:123b-cloud",
+];
 
 /**
  * Given the current model (or null), return the next tier up.
