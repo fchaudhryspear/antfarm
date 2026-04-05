@@ -1,0 +1,15 @@
+{
+  "id": "swarm-requirements-v1",
+  "name": "Product Requirements Swarm v1.0",
+  "version": "1",
+  "description": "Transforms a plain-text feature request into a structured PRD with user stories, technical feasibility, UX flows, and security requirements. Phase 1 of the OpenClaw Full SDLC Pipeline.",
+  "author": "Optimus",
+  "created": "2026-03-31",
+  "parent": null,
+  "changes": [
+    "Initial release: 6 agents (intake-parser, product-strategist, technical-feasibility, ux-flow-designer, security-compliance, prd-compiler)",
+    "Structured JSON output contracts for all agents",
+    "PRD JSON schema with conflict resolution and completeness checks",
+    "Parallel specialist execution with consolidator"
+  ]
+}

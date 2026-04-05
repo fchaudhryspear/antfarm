@@ -1,0 +1,35 @@
+#!/bin/bash
+# antfarm-wrapper.sh - Wrapper to default model-orchestrator workflow
+# 
+# Usage: antfarm-wrapper "your task here"
+# This automatically routes to model-orchestrator workflow
+
+# If no arguments, show help
+if [ $# -eq 0 ]; then
+    echo "🤖 Model Orchestrator - Antfarm Wrapper"
+    echo ""
+    echo "Usage: antfarm <your task>"
+    echo ""
+    echo "This automatically routes your task through the model orchestrator"
+    echo "for intelligent model selection and cost optimization."
+    echo ""
+    echo "Examples:"
+    echo '  antfarm "Write Python function to sort list"'
+    echo '  antfarm "Research quantum computing history"'
+    echo '  antfarm "Debug this React error"'
+    echo ""
+    echo "For other workflows, use: antfarm workflow run <workflow-name> <task>"
+    echo "Available workflows:"
+    antfarm workflow list
+    exit 0
+fi
+
+# Join all arguments into a single task
+TASK="$*"
+
+echo "🚀 Routing task through Model Orchestrator..."
+echo "Task: $TASK"
+echo ""
+
+# Run the model-orchestrator workflow
+antfarm workflow run model-orchestrator "$TASK"

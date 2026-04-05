@@ -1,0 +1,134 @@
+#!/usr/bin/env node
+/**
+ * Cron Recovery Hook
+ * 
+ * Re-registers agent crons for all active workflow runs.
+ * Run this after gateway restarts to ensure crons survive.
+ * 
+ * Usage: antfarm cron-recovery [--dry-run]
+ */
+
+import { execSync } from 'node:child_process';
+import path from 'node:path';
+import os from 'node:os';
+import { ensureWorkflowCrons } from '../installer/agent-cron.js';
+import { loadWorkflowSpec } from '../installer/workflow-spec.js';
+import { resolveWorkflowDir } from '../installer/paths.js';
+import { listCronJobs } from '../installer/gateway-api.js';
+
+interface ActiveRun {
+  id: string;
+  workflow_id: string;
+  status: string;
+  task: string;
+  updated_at: string;
+}
+
+function getActiveRuns(): ActiveRun[] {
+  const dbPath = path.join(os.homedir(), '.openclaw', 'antfarm', 'antfarm.db');
+  const output = execSync(`sqlite3 "${dbPath}" "SELECT id, workflow_id, status, task, updated_at FROM runs WHERE status = 'running' ORDER BY updated_at DESC;"`, {
+    encoding: 'utf-8'
+  });
+  
+  if (!output.trim()) return [];
+  
+  return output.trim().split('\n').map(line => {
+    const [id, workflow_id, status, task, updated_at] = line.split('|');
+    return { id, workflow_id, status, task, updated_at };
+  });
+}
+
+export async function recoverCrons(dryRun = false): Promise<{
+  workflows: string[];
+  registered: number;
+  alreadyPresent: number;
+  errors: Array<{ workflow: string; error: string }>;
+}> {
+  const activeRuns = getActiveRuns();
+  
+  // Group by workflow (multiple runs of same workflow = one ensure-crons call)
+  const workflows = [...new Set(activeRuns.map(r => r.workflow_id))];
+  
+  const result = {
+    workflows,
+    registered: 0,
+    alreadyPresent: 0,
+    errors: [] as Array<{ workflow: string; error: string }>,
+  };
+  
+  if (dryRun) {
+    console.log('🔍 Dry run — no changes will be made\n');
+    console.log(`Found ${activeRuns.length} active run(s) across ${workflows.length} workflow(s):\n`);
+    for (const run of activeRuns) {
+      console.log(`   #${run.id.slice(0, 8)}  ${run.workflow_id}  ${run.task.slice(0, 50)}...`);
+    }
+    console.log(`\nWould call ensure-crons for: ${workflows.join(', ')}`);
+    return result;
+  }
+  
+  console.log(`🔧 Recovering crons for ${workflows.length} workflow(s)...\n`);
+  
+  for (const workflowId of workflows) {
+    try {
+      const workflowDir = resolveWorkflowDir(workflowId);
+      const workflow = await loadWorkflowSpec(workflowDir);
+      
+      // Check if crons already exist via gateway API
+      const cronResult = await listCronJobs();
+      const existingCrons = cronResult.jobs || [];
+      const workflowCrons = existingCrons.filter((c: { name: string }) => c.name?.startsWith(`antfarm/${workflowId}/`));
+      
+      if (workflowCrons.length > 0) {
+        console.log(`   ⏭️  ${workflowId}: ${workflowCrons.length} cron(s) already present`);
+        result.alreadyPresent++;
+      } else {
+        console.log(`   📝 ${workflowId}: registering ${workflow.agents?.length || 0} agent cron(s)...`);
+        await ensureWorkflowCrons(workflow);
+        
+        // Verify registration
+        const afterResult = await listCronJobs();
+        const afterCrons = afterResult.jobs || [];
+        const afterWorkflowCrons = afterCrons.filter((c: { name: string }) => c.name?.startsWith(`antfarm/${workflowId}/`));
+        console.log(`   ✅ ${workflowId}: ${afterWorkflowCrons.length} cron(s) registered`);
+        result.registered++;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`   ❌ ${workflowId}: ${msg}`);
+      result.errors.push({ workflow: workflowId, error: msg });
+    }
+  }
+  
+  return result;
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const dryRun = args.includes('--dry-run') || args.includes('-n');
+  
+  try {
+    const result = await recoverCrons(dryRun);
+    
+    console.log('\n' + '='.repeat(50));
+    console.log(`Summary: ${result.registered} registered, ${result.alreadyPresent} already present`);
+    
+    if (result.errors.length > 0) {
+      console.log(`\n⚠️  ${result.errors.length} error(s):`);
+      for (const { workflow, error } of result.errors) {
+        console.log(`   ${workflow}: ${error}`);
+      }
+      process.exit(1);
+    } else {
+      console.log('✅ Cron recovery complete');
+      process.exit(0);
+    }
+  } catch (err) {
+    console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
+// Only run main if this is the entry point (not imported)
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}

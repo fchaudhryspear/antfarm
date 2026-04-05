@@ -1,0 +1,746 @@
+id: swarm-code-fix-v1
+name: 10-Domain Parallel Fixer Swarm v1.6
+version: 1.6
+workflow_objective: Apply targeted code fixes across all 10 review domains in parallel, then open a single consolidated PR with rollback safety, cross-domain awareness, and self-verification.
+description: |
+  Mirrors the swarm-code-review-v3 agent roster: one dedicated fixer per domain.
+  All 10 fixers run in parallel after setup. A consolidate-pr agent waits for all fixers,
+  runs integration build/test, bisects on failure, and opens a single PR.
+
+  v1.6: Pre-filter + bounded post-review (Tasks 7 + 11):
+    - Task 7: Setup STEP 5 extracts per-domain finding sections; fixers receive pre-filtered
+      findings via steps.setup.summary instead of full findings — reduces token waste.
+    - Task 11: verify=true enabled by default; post-review bounded to max 20 files/domain,
+      5 findings/domain, top-50 sampling by priority order; Issue #81 workaround applied.
+  v1.5: Precision fixes from review:
+    - Fix 1: qwen-plus → minimax-m2.7:cloud for docs/ux/product (qwen-plus unproven in antfarm)
+    - Fix 2: STATUS:partial for multi-file fixes (revert only failing file, not entire fix)
+    - Fix 3: post-review scoped to changed domains only, not all changed files
+  v1.4: Issue 6 — post-consolidation re-review loop properly wired as a real workflow step.
+    - Added post-review agent + step (depends_on: consolidate-pr)
+    - verify=true triggers targeted review of ONLY changed files on the fix branch
+    - Asks: "did combined fixes introduce NEW issues?" (distinct from per-fixer self-verification)
+    - VERIFY_STATUS fed back into PR comment via consolidator output
+    - verify=false (default): post-review step outputs VERIFY_STATUS: skipped immediately
+  v1.3: Precision corrections from review (Issues 1-5):
+    - Issue 1: priority default changed all (was high-and-above — was silently skipping medium findings)
+    - Issue 2: self-verification extended to all modified files, not just single file
+    - Issue 3: confirmed — bisect only triggers on build failure (safe_consolidate guards Step 3)
+    - Issue 4: fix-docs/fix-ux/fix-product downgraded qwen3.5→qwen-plus (right-sized)
+    - Issue 5: confirmed — all model strings have :cloud suffix (qwen-plus has no suffix, correct)
+  v1.2: Principal-engineer structural upgrades (Fas priority order):
+    - #2 Rollback: consolidator runs full build+test after merge; bisects failing domains;
+      DOMAINS_EXCLUDED field; opt-in via safe_consolidate=true (default true).
+    - #1 Cross-domain: all fixers receive full findings (read-only) + shared-file map from setup.
+    - #5 Re-review loop: verify=true flag added; design decision: --context verify=true triggers
+      targeted re-review of affected domains after consolidator finishes (separate from full swarm).
+      Consolidator output includes VERIFY_STATUS field when verify=true.
+      Setup now detects files appearing in multiple domain findings and flags them.
+    - #5 Re-review: each fixer has explicit self-verification step — re-reads edited file,
+      confirms the specific cited issue is resolved before committing.
+    - #3 Severity ordering: PR body organized security→backend→perf→tests→code-quality
+      →frontend→devops→ux→product→docs. Deferred items at bottom.
+    - #6 Deferred tracking: consolidator aggregates all STATUS:deferred outputs into
+      DEFERRED_LOG section in PR body with full context for next run.
+    - #4 Max fixes: default 3→5; priority default=all (all findings); high-and-above/high/critical-only for fast passes.
+    - #7 Setup model: qwen-turbo (4 git commands don't need qwen3.5).
+  v1.1: Model alignment + PE prompt elevation.
+  v1.0: Initial release — domain-matched fixers, Bug #17/#21/#22/#27 fixed.
+
+context:
+  repo_path: ""          # REQUIRED: --repo-path=/path/to/repo
+  repo_name: ""          # REQUIRED: --context repo_name=my-project
+  findings: ""           # REQUIRED: --context findings="$(cat findings.txt)" or findings="$(cat findings.json)"
+  findings_format: "auto"  # auto | json | freetext — auto-detects JSON vs freetext
+  branch: "fix/swarm-auto"
+  build_cmd: "npm run build 2>/dev/null || python -m py_compile **/*.py 2>/dev/null || true"
+  test_cmd: "npm test --passWithNoTests 2>/dev/null || pytest -x -q 2>/dev/null || true"
+  exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
+  max_fixes_per_domain: "5"          # v1.2: bumped from 3
+  priority: "all"                     # options: all (default) | high-and-above | high (high+critical) | critical-only
+  safe_consolidate: "true"           # run bisect rollback on integration build failure
+  verify: "true"                    # v1.6: enabled — Issue #81 workaround: post-review receives only DOMAINS_INCLUDED + FILES_MODIFIED
+  fix_directive: "Fix real issues found in {{ repo_path }}. Read files before editing. Exclude: {{ exclude_patterns }}. Do NOT fabricate fixes. Do NOT discuss the workflow pipeline."
+
+acceptance_criteria:
+  - "Setup creates branch, confirms repo accessible, outputs shared-file map"
+  - "All 10 fixer agents complete (partial ok — consolidator handles missing/deferred)"
+  - "Each fixer outputs STATUS: done | skipped | deferred"
+  - "consolidate-pr runs integration build before opening PR"
+  - "If safe_consolidate=true and build fails: bisect, exclude breaking domain, still open PR"
+  - "PR body ordered by severity; DEFERRED_LOG section present if any items deferred"
+  - "No fixer rewrites files in node_modules / vendor / _build_artifacts"
+  - "If verify=true: post-review step runs against changed files only; outputs VERIFY_STATUS"
+
+polling:
+  model: ollama-cloud/deepseek-v3.2:cloud
+  delivery:
+    channel: telegram
+  timeoutSeconds: 7200
+
+agents:
+  - id: setup
+    name: Setup
+    role: coding
+    workspace:
+      baseDir: agents/setup
+      files:
+        AGENTS.md: agents/setup/AGENTS.md
+    model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
+
+  - id: fix-code-quality
+    name: Code Quality Fixer
+    role: coding
+    workspace:
+      baseDir: agents/fix-code-quality
+      files:
+        AGENTS.md: agents/fix-code-quality/AGENTS.md
+    model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
+
+  - id: fix-security
+    name: Security Fixer
+    role: coding
+    workspace:
+      baseDir: agents/fix-security
+      files:
+        AGENTS.md: agents/fix-security/AGENTS.md
+    model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
+
+  - id: fix-performance
+    name: Performance Fixer
+    role: coding
+    workspace:
+      baseDir: agents/fix-performance
+      files:
+        AGENTS.md: agents/fix-performance/AGENTS.md
+    model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+
+  - id: fix-ux
+    name: UX Fixer
+    role: coding
+    workspace:
+      baseDir: agents/fix-ux
+      files:
+        AGENTS.md: agents/fix-ux/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
+
+  - id: fix-backend
+    name: Backend Fixer
+    role: coding
+    workspace:
+      baseDir: agents/fix-backend
+      files:
+        AGENTS.md: agents/fix-backend/AGENTS.md
+    model: ollama-cloud/qwen3-coder:480b-cloud
+    delivery:
+      channel: telegram
+
+  - id: fix-frontend
+    name: Frontend Fixer
+    role: coding
+    workspace:
+      baseDir: agents/fix-frontend
+      files:
+        AGENTS.md: agents/fix-frontend/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
+
+  - id: fix-devops
+    name: DevOps Fixer
+    role: coding
+    workspace:
+      baseDir: agents/fix-devops
+      files:
+        AGENTS.md: agents/fix-devops/AGENTS.md
+    model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
+
+  - id: fix-docs
+    name: Documentation Fixer
+    role: coding
+    workspace:
+      baseDir: agents/fix-docs
+      files:
+        AGENTS.md: agents/fix-docs/AGENTS.md
+    model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
+
+  - id: fix-tests
+    name: Testing Fixer
+    role: coding
+    workspace:
+      baseDir: agents/fix-tests
+      files:
+        AGENTS.md: agents/fix-tests/AGENTS.md
+    model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
+
+  - id: fix-product
+    name: Product Fixer
+    role: coding
+    workspace:
+      baseDir: agents/fix-product
+      files:
+        AGENTS.md: agents/fix-product/AGENTS.md
+    model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
+
+  - id: consolidate-pr
+    name: PR Consolidator
+    role: pr
+    workspace:
+      baseDir: agents/consolidate-pr
+      files:
+        AGENTS.md: agents/consolidate-pr/AGENTS.md
+    model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+
+  - id: post-review
+    name: Post-Fix Reviewer
+    role: analysis
+    workspace:
+      baseDir: agents/post-review
+      files:
+        AGENTS.md: agents/post-review/AGENTS.md
+    model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+
+steps:
+  - id: setup
+    agent: setup
+    timeout_minutes: 30
+    expects: 'SETUP_OK:'
+    timeoutSeconds: 300
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      EXCLUDE: {{ exclude_patterns }}
+      ALL_FINDINGS: {{ findings }}
+
+      {{ fix_directive }}
+
+      STEP 1: cd {{ repo_path }} — confirm the directory exists.
+      STEP 2: git status — confirm it is a git repo.
+      STEP 3: git checkout -b {{ branch }} 2>/dev/null || git checkout {{ branch }}
+      STEP 4: Shared-file detection — scan ALL_FINDINGS above and identify any file paths
+        that appear in findings from more than one domain. Output a SHARED_FILES: list.
+        These are high-conflict-risk files — downstream fixers will use this map.
+
+      STEP 5: Domain-specific finding extraction — parse ALL_FINDINGS and output per-domain sections:
+        SECURITY_FINDINGS: <security-related findings only>
+        BACKEND_FINDINGS: <backend-related findings only>
+        PERFORMANCE_FINDINGS: <performance-related findings only>
+        FRONTEND_FINDINGS: <frontend-related findings only>
+        DEVOPS_FINDINGS: <devops-related findings only>
+        TESTING_FINDINGS: <testing-related findings only>
+        CODE_QUALITY_FINDINGS: <code-quality findings only>
+        UX_FINDINGS: <ux-related findings only>
+        DOCS_FINDINGS: <documentation findings only>
+        PRODUCT_FINDINGS: <product-related findings only>
+        Each section should contain ONLY the findings relevant to that domain.
+        If findings_format is JSON, filter by domain/category field.
+        If freetext, use keyword matching to classify findings.
+
+      Output format:
+        SETUP_OK: branch={{ branch }} repo={{ repo_path }}
+        SHARED_FILES: file1.py (security+backend), file2.ts (frontend+ux), ...
+        If no shared files: SHARED_FILES: none
+        SECURITY_FINDINGS: <security-related findings>
+        BACKEND_FINDINGS: <backend-related findings>
+        PERFORMANCE_FINDINGS: <performance-related findings>
+        FRONTEND_FINDINGS: <frontend-related findings>
+        DEVOPS_FINDINGS: <devops-related findings>
+        TESTING_FINDINGS: <testing-related findings>
+        CODE_QUALITY_FINDINGS: <code-quality findings>
+        UX_FINDINGS: <ux-related findings>
+        DOCS_FINDINGS: <documentation findings>
+        PRODUCT_FINDINGS: <product-related findings>
+
+  - id: fix-code-quality
+    agent: fix-code-quality
+    depends_on: [setup]
+    timeout_minutes: 30
+    expects: 'STATUS:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+      MAX_FIXES: {{ max_fixes_per_domain }}
+      PRIORITY: {{ priority }}
+
+      {{ fix_directive }}
+
+      CROSS_DOMAIN_CONTEXT (read-only — do NOT fix these, just be aware):
+      {{ findings }}
+      SHARED_FILES (appear in multiple domains — edit minimally): {{ steps.setup.summary }}
+
+      YOUR DOMAIN FINDINGS (code-quality only — fix these):
+      Extract CODE_QUALITY_FINDINGS section from: {{ steps.setup.summary }}
+
+      Apply PRIORITY filter to these pre-filtered findings:
+      - all (default): fix all severities
+      - high-and-above: fix high + critical, skip medium/low
+      - high: fix high + critical only (synonym for high-and-above, explicit)
+      - critical-only: fix only critical findings
+      Skip anything below your priority threshold — do NOT defer it, just skip it.
+      Fix the top {{ max_fixes_per_domain }} matching findings.
+      Before editing any SHARED_FILE, check git log to see if another fixer already touched it.
+      If no code-quality findings match, output STATUS: skipped — no findings for this domain.
+
+  - id: fix-security
+    agent: fix-security
+    depends_on: [setup]
+    timeout_minutes: 30
+    expects: 'STATUS:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+      MAX_FIXES: {{ max_fixes_per_domain }}
+      PRIORITY: {{ priority }}
+
+      {{ fix_directive }}
+
+      CROSS_DOMAIN_CONTEXT (read-only — do NOT fix these, just be aware):
+      {{ findings }}
+      SHARED_FILES (appear in multiple domains — edit minimally): {{ steps.setup.summary }}
+
+      YOUR DOMAIN FINDINGS (security only — fix these):
+      Extract SECURITY_FINDINGS section from: {{ steps.setup.summary }}
+
+      Apply PRIORITY filter to these pre-filtered findings:
+      - all (default): fix all severities
+      - high-and-above: fix high + critical, skip medium/low
+      - high: fix high + critical only (synonym for high-and-above, explicit)
+      - critical-only: fix only critical findings
+      Skip anything below your priority threshold — do NOT defer it, just skip it.
+      Fix the top {{ max_fixes_per_domain }} matching findings.
+      For each security fix, write a regression test that proves the attack vector is blocked.
+      Before editing any SHARED_FILE, check git log to see if another fixer already touched it.
+      If no security findings match, output STATUS: skipped — no findings for this domain.
+
+  - id: fix-performance
+    agent: fix-performance
+    depends_on: [setup]
+    timeout_minutes: 30
+    expects: 'STATUS:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+      MAX_FIXES: {{ max_fixes_per_domain }}
+      PRIORITY: {{ priority }}
+
+      {{ fix_directive }}
+
+      CROSS_DOMAIN_CONTEXT (read-only — do NOT fix these, just be aware):
+      {{ findings }}
+      SHARED_FILES (appear in multiple domains — edit minimally): {{ steps.setup.summary }}
+
+      YOUR DOMAIN FINDINGS (performance only — fix these):
+      Extract PERFORMANCE_FINDINGS section from: {{ steps.setup.summary }}
+
+      Apply PRIORITY filter to these pre-filtered findings:
+      - all (default): fix all severities
+      - high-and-above: fix high + critical, skip medium/low
+      - high: fix high + critical only (synonym for high-and-above, explicit)
+      - critical-only: fix only critical findings
+      Skip anything below your priority threshold — do NOT defer it, just skip it.
+      Fix the top {{ max_fixes_per_domain }} matching findings.
+      Before editing any SHARED_FILE, check git log to see if another fixer already touched it.
+      If no performance findings match, output STATUS: skipped — no findings for this domain.
+
+  - id: fix-ux
+    agent: fix-ux
+    depends_on: [setup]
+    timeout_minutes: 30
+    expects: 'STATUS:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+      MAX_FIXES: {{ max_fixes_per_domain }}
+      PRIORITY: {{ priority }}
+
+      {{ fix_directive }}
+
+      CROSS_DOMAIN_CONTEXT (read-only — do NOT fix these, just be aware):
+      {{ findings }}
+      SHARED_FILES (appear in multiple domains — edit minimally): {{ steps.setup.summary }}
+
+      YOUR DOMAIN FINDINGS (ux only — fix these):
+      Extract UX_FINDINGS section from: {{ steps.setup.summary }}
+
+      Apply PRIORITY filter to these pre-filtered findings (accessibility, error states, form validation):
+      - all (default): fix all severities
+      - high-and-above: fix high + critical, skip medium/low
+      - high: fix high + critical only (synonym for high-and-above, explicit)
+      - critical-only: fix only critical findings
+      Skip anything below your priority threshold — do NOT defer it, just skip it.
+      Fix the top {{ max_fixes_per_domain }} matching findings.
+      Before editing any SHARED_FILE, check git log to see if another fixer already touched it.
+      If no UX findings match, output STATUS: skipped — no findings for this domain.
+
+  - id: fix-backend
+    agent: fix-backend
+    depends_on: [setup]
+    timeout_minutes: 30
+    expects: 'STATUS:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+      MAX_FIXES: {{ max_fixes_per_domain }}
+      PRIORITY: {{ priority }}
+
+      {{ fix_directive }}
+
+      CROSS_DOMAIN_CONTEXT (read-only — do NOT fix these, just be aware):
+      {{ findings }}
+      SHARED_FILES (appear in multiple domains — edit minimally): {{ steps.setup.summary }}
+
+      YOUR DOMAIN FINDINGS (backend only — fix these):
+      Extract BACKEND_FINDINGS section from: {{ steps.setup.summary }}
+
+      Apply PRIORITY filter to these pre-filtered findings (API design, error handling, DB schema, Lambda):
+      - all (default): fix all severities
+      - high-and-above: fix high + critical, skip medium/low
+      - high: fix high + critical only (synonym for high-and-above, explicit)
+      - critical-only: fix only critical findings
+      Skip anything below your priority threshold — do NOT defer it, just skip it.
+      Fix the top {{ max_fixes_per_domain }} matching findings.
+      Before editing any SHARED_FILE, check git log to see if another fixer already touched it.
+      If no backend findings match, output STATUS: skipped — no findings for this domain.
+
+  - id: fix-frontend
+    agent: fix-frontend
+    depends_on: [setup]
+    timeout_minutes: 30
+    expects: 'STATUS:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+      MAX_FIXES: {{ max_fixes_per_domain }}
+      PRIORITY: {{ priority }}
+
+      {{ fix_directive }}
+
+      CROSS_DOMAIN_CONTEXT (read-only — do NOT fix these, just be aware):
+      {{ findings }}
+      SHARED_FILES (appear in multiple domains — edit minimally): {{ steps.setup.summary }}
+
+      YOUR DOMAIN FINDINGS (frontend only — fix these):
+      Extract FRONTEND_FINDINGS section from: {{ steps.setup.summary }}
+
+      Apply PRIORITY filter to these pre-filtered findings (component architecture, state, routing, bundle):
+      - all (default): fix all severities
+      - high-and-above: fix high + critical, skip medium/low
+      - high: fix high + critical only (synonym for high-and-above, explicit)
+      - critical-only: fix only critical findings
+      Skip anything below your priority threshold — do NOT defer it, just skip it.
+      Fix the top {{ max_fixes_per_domain }} matching findings.
+      Before editing any SHARED_FILE, check git log to see if another fixer already touched it.
+      If no frontend findings match, output STATUS: skipped — no findings for this domain.
+
+  - id: fix-devops
+    agent: fix-devops
+    depends_on: [setup]
+    timeout_minutes: 30
+    expects: 'STATUS:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+      MAX_FIXES: {{ max_fixes_per_domain }}
+      PRIORITY: {{ priority }}
+
+      {{ fix_directive }}
+
+      CROSS_DOMAIN_CONTEXT (read-only — do NOT fix these, just be aware):
+      {{ findings }}
+      SHARED_FILES (appear in multiple domains — edit minimally): {{ steps.setup.summary }}
+
+      YOUR DOMAIN FINDINGS (devops only — fix these):
+      Extract DEVOPS_FINDINGS section from: {{ steps.setup.summary }}
+
+      Apply PRIORITY filter to these pre-filtered findings (CI/CD, IaC, Docker, secrets, monitoring):
+      - all (default): fix all severities
+      - high-and-above: fix high + critical, skip medium/low
+      - high: fix high + critical only (synonym for high-and-above, explicit)
+      - critical-only: fix only critical findings
+      Skip anything below your priority threshold — do NOT defer it, just skip it.
+      Fix the top {{ max_fixes_per_domain }} matching findings.
+      Before editing any SHARED_FILE, check git log to see if another fixer already touched it.
+      If no DevOps findings match, output STATUS: skipped — no findings for this domain.
+
+  - id: fix-docs
+    agent: fix-docs
+    depends_on: [setup]
+    timeout_minutes: 30
+    expects: 'STATUS:'
+    timeoutSeconds: 1800
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      EXCLUDE: {{ exclude_patterns }}
+      MAX_FIXES: {{ max_fixes_per_domain }}
+      PRIORITY: {{ priority }}
+
+      {{ fix_directive }}
+
+      CROSS_DOMAIN_CONTEXT (read-only — do NOT fix these, just be aware):
+      {{ findings }}
+      SHARED_FILES (appear in multiple domains — edit minimally): {{ steps.setup.summary }}
+
+      YOUR DOMAIN FINDINGS (documentation only — fix these):
+      Extract DOCS_FINDINGS section from: {{ steps.setup.summary }}
+
+      Apply PRIORITY filter to these pre-filtered findings:
+      - all (default): fix all severities
+      - high-and-above: fix high + critical, skip medium/low
+      - high: fix high + critical only (synonym for high-and-above, explicit)
+      - critical-only: fix only critical findings
+      Skip anything below your priority threshold — do NOT defer it, just skip it.
+      Fix the top {{ max_fixes_per_domain }} matching findings.
+      If no documentation findings match, output STATUS: skipped — no findings for this domain.
+
+  - id: fix-tests
+    agent: fix-tests
+    depends_on: [setup]
+    timeout_minutes: 30
+    expects: 'STATUS:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      EXCLUDE: {{ exclude_patterns }}
+      MAX_FIXES: {{ max_fixes_per_domain }}
+      PRIORITY: {{ priority }}
+
+      {{ fix_directive }}
+
+      CROSS_DOMAIN_CONTEXT (read-only — do NOT fix these, just be aware):
+      {{ findings }}
+      SHARED_FILES (appear in multiple domains — edit minimally): {{ steps.setup.summary }}
+
+      YOUR DOMAIN FINDINGS (testing only — fix these):
+      Extract TESTING_FINDINGS section from: {{ steps.setup.summary }}
+
+      Apply PRIORITY filter to these pre-filtered findings (missing coverage, untested paths):
+      - all (default): fix all severities
+      - high-and-above: fix high + critical, skip medium/low
+      - high: fix high + critical only (synonym for high-and-above, explicit)
+      - critical-only: fix only critical findings
+      Skip anything below your priority threshold — do NOT defer it, just skip it.
+      Write the top {{ max_fixes_per_domain }} missing tests. Run {{ test_cmd }} after writing.
+      If no testing findings match, output STATUS: skipped — no findings for this domain.
+
+  - id: fix-product
+    agent: fix-product
+    depends_on: [setup]
+    timeout_minutes: 30
+    expects: 'STATUS:'
+    timeoutSeconds: 1800
+    max_retries: 2
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      EXCLUDE: {{ exclude_patterns }}
+      MAX_FIXES: {{ max_fixes_per_domain }}
+      PRIORITY: {{ priority }}
+
+      {{ fix_directive }}
+
+      CROSS_DOMAIN_CONTEXT (read-only — do NOT fix these, just be aware):
+      {{ findings }}
+      SHARED_FILES (appear in multiple domains — edit minimally): {{ steps.setup.summary }}
+
+      YOUR DOMAIN FINDINGS (product only — fix these):
+      Extract PRODUCT_FINDINGS section from: {{ steps.setup.summary }}
+
+      Apply PRIORITY filter to these pre-filtered findings (feature flags, broken flows, hardcoded copy):
+      - all (default): fix all severities
+      - high-and-above: fix high + critical, skip medium/low
+      - high: fix high + critical only (synonym for high-and-above, explicit)
+      - critical-only: fix only critical findings
+      Skip anything below your priority threshold — do NOT defer it, just skip it.
+      Fix the top {{ max_fixes_per_domain }} matching findings.
+      If no product findings match, output STATUS: skipped — no findings for this domain.
+
+  - id: consolidate-pr
+    agent: consolidate-pr
+    depends_on:
+      - fix-code-quality
+      - fix-security
+      - fix-performance
+      - fix-ux
+      - fix-backend
+      - fix-frontend
+      - fix-devops
+      - fix-docs
+      - fix-tests
+      - fix-product
+    timeout_minutes: 30
+    expects: 'PR_URL:'
+    timeoutSeconds: 2700   # 45 min — allows bisect cycles
+    max_retries: 2
+    input: |
+      TASK: Consolidate all domain fixes into one PR with rollback safety and severity ordering.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      SAFE_CONSOLIDATE: {{ safe_consolidate }}
+      VERIFY: {{ verify }}
+
+      FIXER OUTPUTS (use for PR body + bisect decisions):
+      Security: {{ steps.fix-security.summary }}
+      Backend: {{ steps.fix-backend.summary }}
+      Performance: {{ steps.fix-performance.summary }}
+      Testing: {{ steps.fix-tests.summary }}
+      Code Quality: {{ steps.fix-code-quality.summary }}
+      Frontend: {{ steps.fix-frontend.summary }}
+      DevOps: {{ steps.fix-devops.summary }}
+      UX: {{ steps.fix-ux.summary }}
+      Product: {{ steps.fix-product.summary }}
+      Docs: {{ steps.fix-docs.summary }}
+
+      Follow the consolidator protocol in your AGENTS.md:
+      1. Run integration build+test
+      2. If failure and SAFE_CONSOLIDATE=true: bisect by domain
+      3. Order PR body by severity (security first, docs last)
+      4. Collect all STATUS:deferred items into DEFERRED_LOG
+      5. Open PR
+
+  - id: post-review
+    agent: post-review
+    depends_on: [consolidate-pr]
+    timeout_minutes: 25
+    expects: 'VERIFY_STATUS:'
+    timeoutSeconds: 3600
+    max_retries: 1
+    input: |
+      TASK: Post-fix system-level review — check whether combined fixes introduced new issues.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      BRANCH: {{ branch }}
+      BUILD_CMD: {{ build_cmd }}
+      TEST_CMD: {{ test_cmd }}
+      VERIFY: {{ verify }}
+      EXCLUDE: {{ exclude_patterns }}
+      ORIGINAL_FINDINGS: {{ findings }}
+      SHARED_FILES: {{ steps.setup.summary }}
+
+      CONSOLIDATOR_OUTPUT: {{ steps.consolidate-pr.summary }}
+      # consolidator output includes PR_URL:, DOMAINS_INCLUDED:, DOMAINS_EXCLUDED:, DOMAINS_SKIPPED:
+      # post-review MUST check DOMAINS_EXCLUDED before deciding what to re-review
+
+      If VERIFY=false: immediately output VERIFY_STATUS: skipped and NEW_ISSUES: 0. Do nothing else.
+
+      If VERIFY=true:
+      - Only review files from DOMAINS_INCLUDED — do not review excluded or skipped domains
+      - Maximum 20 files per domain for review
+      - Maximum 5 findings per domain
+      - If total changed files > 50, sample the top 50 by domain priority:
+        security → backend → performance → testing → code-quality → frontend → devops → ux → product → docs
+      - Issue #81 workaround: only receive DOMAINS_INCLUDED and their FILES_MODIFIED from
+        consolidator output, NOT the full fixer outputs, to reduce token usage
+      - DOMAINS_WITH_CHANGES: extract which domains output STATUS:done from fixer summaries above
+        (security, backend, performance, testing, code-quality, frontend, devops, ux, product, docs)
+      - Get changed files per domain by inspecting FILES_MODIFIED from each fixer output
+      - Run review agents ONLY for domains that made changes — do NOT re-review unchanged domains
+      - For each changed domain: review only that domain's FILES_MODIFIED for NEW issues
+      - Run {{ test_cmd }} to catch regressions across the combined changeset
+      - Output VERIFY_STATUS: clean | issues-found with VERIFY_DOMAINS_CHECKED listing only active domains
+
+hooks:
+  onSuccess:
+    - type: log
+      message: "Code fix swarm completed successfully"
+    - type: notify
+      message: |
+        Code fix swarm completed for {{ repo_name }}!
+        PR: {{ steps.consolidate-pr.summary }}
+        Task: {{ task }}
+  onFailure:
+    - type: log
+      message: "Code fix swarm failed"
+    - type: notify
+      message: |
+        Code fix swarm failed for {{ repo_name }}
+        Error: {{ error }}
+        Failed at step: {{ failed_step }}

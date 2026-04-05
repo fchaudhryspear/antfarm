@@ -364,6 +364,67 @@ export async function deleteAgentCronJobs(namePrefix: string): Promise<void> {
   }
 }
 
+// ── Issue #336: Event-driven step triggering ────────────────────────
+// Spawn an isolated agent session via the gateway, bypassing cron polling.
+// Used after advancePipeline dispatches steps to fire agents immediately.
+export async function spawnAgentSession(params: {
+  agentId: string;
+  model?: string;
+  task: string;
+  timeoutSeconds?: number;
+}): Promise<{ ok: boolean; error?: string }> {
+  const payload = {
+    tool: "sessions_spawn",
+    args: {
+      action: "spawn",
+      agentId: params.agentId,
+      model: params.model,
+      task: params.task,
+      ...(params.timeoutSeconds && { timeoutSeconds: params.timeoutSeconds }),
+    },
+    sessionKey: "agent:main:main",
+  };
+
+  const gateway = await getGatewayConfig();
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (gateway.secret) headers["Authorization"] = `Bearer ${gateway.secret}`;
+
+    const response = await fetch(`${gateway.url}/tools/invoke`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      return result.ok ? { ok: true } : { ok: false, error: result.error?.message ?? "Unknown error" };
+    }
+
+    if (isTransientGatewayFailure(response.status)) {
+      // fallback to CLI
+    } else {
+      const text = await response.text();
+      return { ok: false, error: `Gateway returned ${response.status}: ${text}` };
+    }
+  } catch {
+    // fallback to CLI
+  }
+
+  // CLI fallback
+  try {
+    const args = ["tool", "run", "--tool", "sessions_spawn", "--json"];
+    if (params.agentId) args.push("--agent", params.agentId);
+    if (params.model) args.push("--model", params.model);
+    if (params.task) args.push("--message", params.task);
+    await runCli(args);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: `CLI fallback failed: ${err}. ${UPDATE_HINT}` };
+  }
+}
+
 export async function sendSessionMessage(params: { sessionKey: string; message: string }): Promise<{ ok: boolean; error?: string }> {
   const payload = {
     tool: "sessions_send",

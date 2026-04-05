@@ -1,0 +1,524 @@
+id: swarm-architecture-v1
+name: 8-Agent Architecture & Design Swarm v1.0
+version: 1.0
+workflow_objective: Transform a structured PRD into technical architecture documents, API specifications, database schemas, component designs, and an implementation plan.
+description: |
+  Phase 2 of the SDLC pipeline. Takes a PRD JSON (from swarm-requirements-v1) and produces:
+  - Architecture Decision Records (ADRs)
+  - OpenAPI specifications
+  - Database schema designs
+  - Frontend component hierarchy
+  - DevOps deployment plan
+  - Visual design specs (text + mermaid diagrams, no image generation)
+  - Sequenced implementation plan with phase dependencies
+
+  All 6 domain agents run in parallel after arch-intake. arch-compiler waits for all 6.
+
+  IMPORTANT: Agents do work directly in the cron session. No sessions_spawn, no delegation.
+  The cron agent IS the worker — do not spawn sub-agents.
+context:
+  repo_path: "" # REQUIRED: --repo-path=/path/to/repo
+  repo_name: "" # REQUIRED: --context repo_name=my-project
+  prd_path: ""  # REQUIRED: --context prd_path=docs/prd/feature-name.json
+  tech_stack: "auto" # override if auto-detect is wrong
+context_params:
+  - name: repo_path
+    required: true
+    description: "Absolute path to the codebase"
+  - name: repo_name
+    required: true
+    description: "Short name for filing"
+  - name: prd_path
+    required: true
+    description: "Path to PRD JSON from swarm-requirements-v1"
+acceptance_criteria:
+  - "arch-intake parses PRD, extracts all relevant sections for downstream agents"
+  - "All 6 domain agents produce structured output with no empty fields"
+  - "arch-compiler produces implementation plan with correct phase sequencing (DB before backend, backend before frontend)"
+  - "Architecture JSON written to docs/architecture/<feature-name>.json"
+  - "ADR count, endpoint count, component count all non-zero"
+polling:
+  model: ollama-cloud/deepseek-v3.2:cloud
+  delivery:
+    channel: telegram
+  timeoutSeconds: 5400
+agents:
+  - id: arch-intake
+    name: Architecture Intake
+    role: analysis
+    workspace:
+      baseDir: agents/arch-intake
+      files:
+        AGENTS.md: agents/arch-intake/AGENTS.md
+    model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
+  - id: system-architect
+    name: System Architect
+    role: coding
+    workspace:
+      baseDir: agents/system-architect
+      files:
+        AGENTS.md: agents/system-architect/AGENTS.md
+    model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
+  - id: api-designer
+    name: API Designer
+    role: coding
+    workspace:
+      baseDir: agents/api-designer
+      files:
+        AGENTS.md: agents/api-designer/AGENTS.md
+    model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+  - id: data-architect
+    name: Data Architect
+    role: coding
+    workspace:
+      baseDir: agents/data-architect
+      files:
+        AGENTS.md: agents/data-architect/AGENTS.md
+    model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
+  - id: frontend-architect
+    name: Frontend Architect
+    role: coding
+    workspace:
+      baseDir: agents/frontend-architect
+      files:
+        AGENTS.md: agents/frontend-architect/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
+  - id: devops-architect
+    name: DevOps Architect
+    role: coding
+    workspace:
+      baseDir: agents/devops-architect
+      files:
+        AGENTS.md: agents/devops-architect/AGENTS.md
+    model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+  - id: visual-designer
+    name: Visual Designer
+    role: coding
+    workspace:
+      baseDir: agents/visual-designer
+      files:
+        AGENTS.md: agents/visual-designer/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
+  - id: arch-compiler
+    name: Architecture Compiler
+    role: coding
+    workspace:
+      baseDir: agents/arch-compiler
+      files:
+        AGENTS.md: agents/arch-compiler/AGENTS.md
+    model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
+steps:
+  - id: parse-prd
+    agent: arch-intake
+    timeout_minutes: 25
+    expects: 'ARCH_INTAKE_PARSED:'
+    timeoutSeconds: 900
+    input: |
+      TASK: Parse the PRD JSON and prepare work assignments for 6 downstream architecture agents.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      PRD_PATH: {{ prd_path }}
+
+      STEP 1: Read the PRD JSON at {{ prd_path }}
+      STEP 2: Extract the following sections and format for downstream agents:
+        - USER_STORIES: all user stories with IDs
+        - TECHNICAL_ASSESSMENT: from technical-feasibility agent
+        - UX_FLOWS: all UX flow definitions
+        - SECURITY_REQUIREMENTS: auth requirements, data classification, compliance flags
+      STEP 3: Determine which agents need which sections based on their domain.
+      STEP 4: Output structured work assignments.
+
+      Output format:
+        ARCH_INTAKE_PARSED: true
+        STORIES_COUNT: <n>
+        DOMAINS_ACTIVATED: system, api, data, frontend, devops, visual
+        WORK_ASSIGNMENTS:
+          system-architect: <relevant PRD sections>
+          api-designer: <relevant PRD sections>
+          data-architect: <relevant PRD sections>
+          frontend-architect: <relevant PRD sections>
+          devops-architect: <relevant PRD sections>
+          visual-designer: <relevant PRD sections>
+
+  - id: system-design
+    agent: system-architect
+    depends_on: [parse-prd]
+    timeout_minutes: 30
+    expects: 'ADR_'
+    timeoutSeconds: 3600
+    input: |
+      TASK: Define high-level system architecture from PRD requirements.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      PRD_PATH: {{ prd_path }}
+
+      INTAKE_OUTPUT: {{ steps.parse-prd.summary }}
+
+      {{ params.prd_path }}
+
+      STEP 1: Read {{ prd_path }} to understand feature requirements.
+      STEP 2: cd into {{ repo_path }} and explore the existing codebase structure to understand patterns.
+      STEP 3: Design system architecture addressing:
+        - Service boundaries (extension vs new service)
+        - Communication patterns (sync/async)
+        - Caching strategy
+        - Error handling (circuit breakers, dead letter queues)
+        - Authentication flow
+        - Existing infrastructure to reuse
+      STEP 4: Write ADRs (Architecture Decision Records) for each significant decision.
+      STEP 5: Produce the output in the required format.
+
+      IMPORTANT: For each ADR, include exact tradeoffs considered — not just the decision.
+      The arch-compiler will use these to validate cross-domain consistency.
+
+      Output MUST include:
+        ADR_COUNT: <n>
+        ARCHITECTURE_STYLE: monolith-extension | new-microservice | serverless-function
+        ADRS: [array of {id, title, status, context, decision, tradeoffs: {pros: [], cons: []}, consequences}]
+        SYSTEM_DIAGRAM_MERMAID: <mermaid graph>
+        INFRASTRUCTURE_CHANGES: [list of new infrastructure needed]
+
+  - id: api-design-core
+    agent: api-designer
+    depends_on: [parse-prd]
+    timeout_minutes: 30
+    expects: 'ENDPOINT_COUNT:'
+    timeoutSeconds: 3600
+    input: |
+      TASK: Design CRUD API endpoints for subscriptions, payments, and payment methods.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      PRD_PATH: {{ prd_path }}
+
+      INTAKE_OUTPUT: {{ steps.parse-prd.summary }}
+
+      STEP 1: Read {{ prd_path }} to understand feature requirements and UX flows.
+      STEP 2: cd into {{ repo_path }} and check existing API conventions:
+        - REST vs GraphQL patterns
+        - Error response format (look at existing API handler files)
+        - Authentication patterns (JWT, API keys, etc.)
+        - Naming conventions
+      STEP 3: Design CRUD REST endpoints for: subscriptions (create/update/cancel/list), invoices (list/get), payment intents (create/confirm/status), payment methods (attach/detach/list).
+      STEP 4: For each endpoint include: method, path, description, auth, request_schema, ALL response schemas (success + errors), rate limit, maps_to_stories.
+      STEP 5: Output OpenAPI spec.
+
+      Output MUST include:
+        ENDPOINT_COUNT: <n>
+        API_VERSION: v1
+        BASE_PATH: /api/v1/<feature>
+        ENDPOINTS: [array of {method, path, description, auth, rate_limit, request_schema, response_schemas: {}, maps_to_stories: []}]
+        OPENAPI_SPEC: <full OpenAPI 3.0 JSON>
+        CONVENTION_NOTES: <how this follows or deviates from existing patterns>
+
+      NOTE: This agent may also run api-design-webhooks. These steps may run sequentially
+      and should not conflict. Keep CRUD endpoint design independent of webhook design.
+
+  - id: api-design-webhooks
+    agent: api-designer
+    depends_on: [parse-prd]
+    timeout_minutes: 30
+    expects: 'WEBHOOK_EVENT_COUNT:'
+    timeoutSeconds: 3600
+    input: |
+      TASK: Design Stripe webhook handlers, event processing, and retry logic.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      PRD_PATH: {{ prd_path }}
+
+      INTAKE_OUTPUT: {{ steps.parse-prd.summary }}
+
+      STEP 1: Read {{ prd_path }} to understand which Stripe events are relevant (subscription created/updated/cancelled, payment succeeded/failed, etc.).
+      STEP 2: cd into {{ repo_path }} and check existing webhook handling patterns (if any).
+      STEP 3: Design webhook endpoint (POST /webhooks/stripe) with:
+        - Stripe signature verification
+        - Event routing to handlers by event type
+        - Idempotency (prevent duplicate processing)
+        - Retry logic with exponential backoff
+        - Dead Letter Queue for failed events
+      STEP 4: Define event handler functions for each relevant Stripe event.
+      STEP 5: Document which events map to which internal actions.
+
+      Output MUST include:
+        WEBHOOK_EVENT_COUNT: <n>
+        WEBHOOK_ENDPOINTS: [array of {path, description, auth, events_handled: []}]
+        EVENT_HANDLERS: [array of {event_type, handler_name, actions: [], idempotent}]
+        RETRY_STRATEGY: {max_attempts, backoff_multiplier, dead_letter_after}
+        IDEMPOTENCY_APPROACH: <description>
+
+      NOTE: This agent may also run api-design-core. These steps may run sequentially
+      and should not conflict. Keep webhook design independent of CRUD endpoint design.
+
+  - id: data-design
+    agent: data-architect
+    depends_on: [parse-prd]
+    timeout_minutes: 30
+    expects: 'SCHEMA_CHANGES_COUNT:'
+    timeoutSeconds: 3600
+    input: |
+      TASK: Design database schema changes for the feature.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      PRD_PATH: {{ prd_path }}
+
+      INTAKE_OUTPUT: {{ steps.parse-prd.summary }}
+
+      STEP 1: Read {{ prd_path }} to understand data requirements.
+      STEP 2: cd into {{ repo_path }} and explore existing database schema:
+        - Look at migrations/ directory for existing table definitions
+        - Check ORM models if they exist
+        - Identify database type (PostgreSQL, DynamoDB, MongoDB, etc.)
+      STEP 3: Design schema changes: new tables/collections, columns with types, indexes, foreign keys.
+      STEP 4: For each schema change, include: migration order, up/down SQL, whether data migration is needed, estimated lock time.
+      STEP 5: Define data flow between services.
+
+      Output MUST include:
+        SCHEMA_CHANGES_COUNT: <n>
+        DATABASE: postgresql | dynamodb | mongodb | etc
+        SCHEMA_CHANGES: [array of {type, name, columns: [{name, type, pk, fk, index}], indexes: []}]
+        MIGRATIONS: [array of {order, description, up, down, data_migration_required, estimated_lock_time}]
+        DATA_FLOW: [array of {from, to, trigger, transforms}]
+        DATA_RETENTION: {payment_records, subscription_history, pii_deletion}
+
+  - id: frontend-design
+    agent: frontend-architect
+    depends_on: [parse-prd]
+    timeout_minutes: 30
+    expects: 'COMPONENT_COUNT:'
+    timeoutSeconds: 3600
+    input: |
+      TASK: Design frontend component hierarchy and routing for the feature.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      PRD_PATH: {{ prd_path }}
+
+      INTAKE_OUTPUT: {{ steps.parse-prd.summary }}
+
+      STEP 1: Read {{ prd_path }} to understand UX flows and user stories.
+      STEP 2: cd into {{ repo_path }} and explore existing frontend:
+        - Check src/ or app/ directory for component patterns
+        - Look at routing setup (react-router, next/router, etc.)
+        - Identify design system / component library in use
+        - State management approach (zustand, redux, context, etc.)
+      STEP 3: Design component tree mapping each UX flow to components.
+      STEP 4: Define new routes needed.
+      STEP 5: For each component: children, props interface, states (loading/error/empty).
+
+      Output MUST include:
+        COMPONENT_COUNT: <n>
+        FRAMEWORK: react | vue | next | etc
+        STATE_MANAGEMENT: zustand | redux | context | etc
+        NEW_ROUTES: [array of {path, component, auth_required, layout}]
+        COMPONENT_TREE: {componentName: {children: [], state: [], api_calls: []}}
+        SHARED_COMPONENTS_REUSED: [list]
+        NEW_COMPONENTS: [list]
+        ESTIMATED_COMPLEXITY: {componentName: "small|medium|large (~N lines)"}
+
+  - id: devops-design
+    agent: devops-architect
+    depends_on: [parse-prd]
+    timeout_minutes: 30
+    expects: 'DEPLOYMENT_STRATEGY:'
+    timeoutSeconds: 3600
+    input: |
+      TASK: Design deployment strategy, CI/CD changes, and monitoring for the feature.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      PRD_PATH: {{ prd_path }}
+
+      INTAKE_OUTPUT: {{ steps.parse-prd.summary }}
+
+      STEP 1: Read {{ prd_path }} to understand security requirements and compliance flags.
+      STEP 2: cd into {{ repo_path }} and explore existing infrastructure:
+        - Look at buildspec.yml, Dockerfile, template.yaml, or similar IaC
+        - Check existing CI/CD pipeline files (.github/workflows/, .gitlab-ci.yml, etc.)
+        - Identify secrets management approach
+        - Check existing monitoring/alerting setup
+      STEP 3: Design deployment strategy, environment variables, CI/CD changes, monitoring.
+
+      Output MUST include:
+        DEPLOYMENT_STRATEGY: rolling | blue-green | canary
+        DOWNTIME_REQUIRED: true | false
+        NEW_ENVIRONMENT_VARIABLES: [array of {name, source, environments}]
+        INFRASTRUCTURE_CHANGES: [array of {type, description, resource}]
+        CI_CD_CHANGES: [array of {pipeline, change, stage}]
+        MONITORING: [array of {metric, threshold, alert, reason}]
+        ROLLBACK_PLAN: <description>
+        DEPLOYMENT_TARGETS: {
+          backend: {type, template, stack_name, region},
+          frontend: {
+            type: "s3_cloudfront",
+            s3_bucket: "<bucket-name>",
+            cloudfront_distribution: "<dist-id>",
+            domain: "<custom-domain>",
+            build_command: "npm run build",
+            build_output_dir: "frontend-v2/dist/",
+            env_vars: [{name, value}],
+            auto_deploy_workflow: ".github/workflows/deploy-frontend.yml"
+          }
+        }
+
+  - id: visual-design
+    agent: visual-designer
+    depends_on: [parse-prd]
+    timeout_minutes: 30
+    expects: 'VISUAL_DESIGN:'
+    timeoutSeconds: 3600
+    max_retries: 2
+    input: |
+      TASK: Create visual design specifications from PRD requirements.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      PRD_PATH: {{ prd_path }}
+
+      INTAKE_OUTPUT: {{ steps.parse-prd.summary }}
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+      Exclude from all file operations: _build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git
+
+      STEP 1: Read {{ prd_path }} to understand UX flows and user stories.
+      STEP 2: cd into {{ repo_path }} and explore existing frontend for design patterns:
+        - Check for design tokens (colors, spacing, typography) in CSS/SCSS/theme files
+        - Identify component library or design system in use
+        - Note existing visual conventions
+      STEP 3: Produce:
+        a) Mermaid diagrams for each user flow (max 8 flows)
+        b) Text-based wireframe descriptions (ASCII art or structured text) for each screen
+        c) Design token recommendations based on existing code (colors, spacing, typography)
+        d) Component state specs for each component: loading, error, empty, success states
+      STEP 4: Output in required format.
+
+      Output MUST include:
+        VISUAL_DESIGN: complete
+        FLOW_DIAGRAM_COUNT: <n>
+        WIREFRAME_COUNT: <n>
+        DESIGN_TOKENS: {colors: [], spacing: [], typography: []}
+        USER_FLOW_DIAGRAMS: [array of {flow_name, mermaid_diagram}]
+        WIREFRAMES: [array of {screen_name, description, ascii_wireframe}]
+        COMPONENT_STATES: [array of {component, states: {loading, error, empty, success}}]
+
+  - id: compile-architecture
+    agent: arch-compiler
+    depends_on:
+      - system-design
+      - api-design-core
+      - api-design-webhooks
+      - data-design
+      - frontend-design
+      - devops-design
+      - visual-design
+    timeout_minutes: 30
+    expects: 'ARCH_STATUS:'
+    timeoutSeconds: 5400
+    input: |
+      TASK: Compile all architecture outputs into a cohesive technical specification.
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      PRD_PATH: {{ prd_path }}
+
+      DOMAIN OUTPUTS:
+      System Architect: {{ steps.system-design.summary }}
+      API Designer (Core): {{ steps.api-design-core.summary }}
+      API Designer (Webhooks): {{ steps.api-design-webhooks.summary }}
+      Data Architect: {{ steps.data-design.summary }}
+      Frontend Architect: {{ steps.frontend-design.summary }}
+      DevOps Architect: {{ steps.devops-design.summary }}
+      Visual Designer: {{ steps.visual-design.summary }}
+
+      STEP 1: Read {{ prd_path }} to understand requirements.
+      STEP 2: Cross-validate outputs:
+        - Do API endpoints map to database tables?
+        - Do frontend components map to real API endpoints?
+        - Does deployment plan cover all new infrastructure?
+        - Do ADRs justify all significant decisions?
+      STEP 3: Identify gaps (any user story without an endpoint? any endpoint without a schema?)
+      STEP 4: Sequence implementation plan with correct phase dependencies:
+        - Phase 1: DB migrations + config (no dependencies)
+        - Phase 2: Backend API (depends on Phase 1)
+        - Phase 3: Frontend (depends on Phase 2)
+        - Phase 4: DevOps + testing (depends on Phase 3)
+      STEP 5: Write final architecture JSON to {{ repo_path }}/docs/architecture/<feature-name>.json
+
+      FEATURE NAME: extract from PRD feature_name field
+      OUTPUT PATH: {{ repo_path }}/docs/architecture/<feature-name-slug>.json
+
+      Output MUST include:
+        ARCH_STATUS: complete | conflicts-found
+        ARCH_VERSION: 1.0
+        VISUAL_DESIGN_STATUS: skipped-v1.0 | complete
+        ADR_COUNT: <n>
+        ENDPOINT_COUNT: <n>
+        SCHEMA_CHANGES_COUNT: <n>
+        COMPONENT_COUNT: <n>
+        SCREEN_COUNT: <n>
+        IMPLEMENTATION_PHASES: <n>
+        CROSS_DOMAIN_VALIDATIONS: [array of {check, status, notes}]
+        GAPS_IDENTIFIED: [array of {type, description}]
+        IMPLEMENTATION_PLAN: {
+          phases: [
+            {phase: 1, name: "Foundation", tasks: [], depends_on: [], estimated_effort: ""},
+            {phase: 2, name: "Backend", tasks: [], depends_on: ["phase-1"], estimated_effort: ""},
+            {phase: 3, name: "Frontend", tasks: [], depends_on: ["phase-2"], estimated_effort: ""},
+            {phase: 4, name: "DevOps & Testing", tasks: [], depends_on: ["phase-3"], estimated_effort: ""}
+          ]
+        }
+        DEPLOYMENT_TARGETS: {
+          backend: {
+            type: "sam" | "lambda" | "ecs" | etc,
+            template: "<IaC template path>",
+            stack_name: "<CFN/SAM stack name>",
+            region: "us-east-1"
+          },
+          frontend: {
+            type: "s3_cloudfront",
+            s3_bucket: "<S3 bucket name>",
+            cloudfront_distribution: "<CloudFront distribution ID>",
+            domain: "<optional custom domain>",
+            build_command: "npm run build",
+            build_output_dir: "dist/",
+            build_working_dir: "frontend-v2/",
+            env_vars: [
+              {name: "VITE_API_URL", value: "<API Gateway URL>"},
+              {name: "VITE_MONITORING_API_URL", value: "<Monitoring API URL>"},
+              {name: "VITE_COGNITO_ENDPOINT", value: "https://cognito-idp.us-east-1.amazonaws.com/"},
+              {name: "VITE_COGNITO_POOL_ID", value: "<User Pool ID from CFN outputs>"},
+              {name: "VITE_CLIENT_ID", value: "<User Pool Client ID from CFN outputs>"}
+            ],
+            auto_deploy: true,
+            deploy_workflow_path: ".github/workflows/deploy-frontend.yml"
+          }
+        }
+        ARCHITECTURE_FILE_WRITTEN: <path>
+
+hooks:
+  onSuccess:
+    - type: log
+      message: "Architecture swarm completed successfully"
+    - type: notify
+      message: |
+        Architecture swarm completed for {{ repo_name }}!
+        ADRs: {{ steps.compile-architecture.summary }}
+        Task: {{ task }}
+  onFailure:
+    - type: log
+      message: "Architecture swarm failed"
+    - type: notify
+      message: |
+        Architecture swarm failed for {{ repo_name }}
+        Error: {{ error }}
+        Failed at step: {{ failed_step }}

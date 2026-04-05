@@ -23,10 +23,12 @@ import { listBundledWorkflows } from "../installer/workflow-fetch.js";
 import { readRecentLogs } from "../lib/logger.js";
 import { getRecentEvents, getRunEvents, type AntfarmEvent } from "../installer/events.js";
 import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/daemonctl.js";
-import { claimStep, completeStep, failStep, getStories, peekStep } from "../installer/step-ops.js";
+import { claimStep, completeStep, failStep, getStories, peekStep, getStepStatus, getAgentStats } from "../installer/step-ops.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
 import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
 import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
+import { validateWorkflow } from "./validate.js";
+import { recoverCrons } from "./cron-recovery.js";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -93,12 +95,14 @@ function printUsage() {
       "antfarm workflow install <name>      Install a workflow",
       "antfarm workflow uninstall <name>    Uninstall a workflow (blocked if runs active)",
       "antfarm workflow uninstall --all     Uninstall all workflows (--force to override)",
+      "antfarm workflow validate <name>     Validate workflow.yml output contracts (preflight check)",
       "antfarm workflow run <name> <task>   Start a workflow run",
       "antfarm workflow status <query>      Check run status (task substring, run ID prefix)",
       "antfarm workflow runs                List all workflow runs",
       "antfarm workflow resume <run-id>     Resume a failed run from where it left off",
       "antfarm workflow stop <run-id>        Stop/cancel a running workflow",
       "antfarm workflow ensure-crons <name>  Recreate agent crons for a workflow",
+      "antfarm cron-recovery [--dry-run]     Re-register crons for all active runs (use after gateway restart)",
       "",
       "antfarm dashboard [start] [--port N]   Start dashboard daemon (default: 3333)",
       "antfarm dashboard stop                  Stop dashboard daemon",
@@ -115,6 +119,8 @@ function printUsage() {
       "antfarm medic run [--json]           Run medic check now (manual trigger)",
       "antfarm medic status                 Show medic health summary",
       "antfarm medic log [<count>]          Show recent medic check history",
+      "",
+      "antfarm agent-stats [--agent <name>]  Show agent retry rates (flags >10%)",
       "",
       "antfarm logs [<lines>]               Show recent activity (from events)",
       "antfarm logs <run-id>                Show activity for a specific run",
@@ -137,6 +143,19 @@ async function main() {
   if (group === "ant") {
     const { printAnt } = await import("./ant.js");
     printAnt();
+    return;
+  }
+
+  if (group === "cron-recovery") {
+    const dryRun = args.includes("--dry-run") || args.includes("-n");
+    const result = await recoverCrons(dryRun);
+    if (result.errors.length > 0) {
+      process.stderr.write(`\n⚠️  ${result.errors.length} error(s) during recovery\n`);
+      for (const { workflow, error } of result.errors) {
+        process.stderr.write(`   ${workflow}: ${error}\n`);
+      }
+      process.exit(1);
+    }
     return;
   }
 
@@ -369,13 +388,21 @@ async function main() {
       process.stdout.write(result + "\n");
       return;
     }
+    if (action === "status") {
+      if (!target) { process.stderr.write("Missing agent-id.\n"); process.exit(1); }
+      const result = getStepStatus(target);
+      process.stdout.write(result + "\n");
+      return;
+    }
     if (action === "claim") {
       if (!target) { process.stderr.write("Missing agent-id.\n"); process.exit(1); }
       const result = claimStep(target);
       if (!result.found) {
         process.stdout.write("NO_WORK\n");
       } else {
-        process.stdout.write(JSON.stringify({ stepId: result.stepId, runId: result.runId, input: result.resolvedInput }) + "\n");
+        const claimOutput: Record<string, unknown> = { stepId: result.stepId, runId: result.runId, input: result.resolvedInput };
+        if (result.escalatedModel) claimOutput.model = result.escalatedModel;
+        process.stdout.write(JSON.stringify(claimOutput) + "\n");
       }
       return;
     }
@@ -415,6 +442,34 @@ async function main() {
     process.stderr.write(`Unknown step action: ${action}\n`);
     printUsage();
     process.exit(1);
+  }
+
+  // Issue #343: Agent retry stats CLI command
+  if (group === "agent-stats") {
+    let agentFilter: string | undefined;
+    const agentIdx = args.indexOf("--agent");
+    if (agentIdx !== -1 && args[agentIdx + 1]) {
+      agentFilter = args[agentIdx + 1];
+    }
+    const stats = getAgentStats(agentFilter);
+    if (stats.length === 0) {
+      console.log(agentFilter ? `No stats found for agent matching "${agentFilter}".` : "No agent stats recorded yet.");
+      return;
+    }
+    console.log("Agent Retry Stats:");
+    console.log(`${"Agent".padEnd(40)} ${"Runs".padStart(6)} ${"Retries".padStart(8)} ${"Rate".padStart(7)}  Status`);
+    console.log("-".repeat(75));
+    for (const s of stats) {
+      const flag = s.flagged ? " ⚠ >10% retry rate" : "";
+      const shortId = s.agent_id.length > 38 ? "…" + s.agent_id.slice(-37) : s.agent_id;
+      console.log(`${shortId.padEnd(40)} ${String(s.total_runs).padStart(6)} ${String(s.retries).padStart(8)} ${(s.retry_rate + "%").padStart(7)}  ${flag}`);
+    }
+    const flagged = stats.filter((s) => s.flagged);
+    if (flagged.length > 0) {
+      console.log(`\n⚠ ${flagged.length} agent(s) with >10% retry rate — consider prompt hardening.`);
+      console.log("  See: docs/agent-prompt-guidelines.md");
+    }
+    return;
   }
 
   if (group === "logs") {
@@ -472,6 +527,23 @@ async function main() {
     return;
   }
 
+  if (action === "validate") {
+    if (!target) { process.stderr.write("Missing workflow-id.\n"); printUsage(); process.exit(1); }
+    const result = await validateWorkflow(target);
+    if (result.valid) {
+      console.log(`✅ Workflow "${target}" validation passed`);
+      process.exit(0);
+    } else {
+      process.stderr.write(`❌ Workflow "${target}" validation failed: ${result.errors.length} error(s)\n`);
+      for (const err of result.errors) {
+        process.stderr.write(`   [${err.step}] ${err.message}\n`);
+        if (err.suggestion) process.stderr.write(`      💡 ${err.suggestion}\n`);
+      }
+      process.exit(1);
+    }
+    return;
+  }
+
   if (action === "stop") {
     if (!target) { process.stderr.write("Missing run-id.\n"); printUsage(); process.exit(1); }
     const result = await stopWorkflow(target);
@@ -484,6 +556,19 @@ async function main() {
   if (!target) { printUsage(); process.exit(1); }
 
   if (action === "install") {
+    // Preflight validation — warning only, don't block install
+    const validateResult = await validateWorkflow(target);
+    if (!validateResult.valid) {
+      process.stderr.write(`⚠️  Workflow "${target}" has output contract errors (installing anyway)\n`);
+      for (const err of validateResult.errors) {
+        process.stderr.write(`   [${err.step}] ${err.message}\n`);
+        if (err.suggestion) process.stderr.write(`      💡 ${err.suggestion}\n`);
+      }
+      process.stderr.write(`\nRuns will fail until these are fixed. Use "antfarm workflow validate ${target}" to re-check.\n\n`);
+    } else if (validateResult.warnings.length > 0) {
+      process.stdout.write(`⚠️  Workflow "${target}" has ${validateResult.warnings.length} warning(s)\n\n`);
+    }
+
     const result = await installWorkflow({ workflowId: target });
     process.stdout.write(`Installed workflow: ${result.workflowId}\nAgent crons will start when a run begins.\n`);
     process.stdout.write(`\nStart with: antfarm workflow run ${result.workflowId} "your task"\n`);
@@ -670,16 +755,82 @@ async function main() {
   }
 
   if (action === "run") {
+    // Preflight validation — hard failure if workflow has output contract errors
+    const validateResult = await validateWorkflow(target);
+    if (!validateResult.valid) {
+      process.stderr.write(`❌ Cannot start run: workflow "${target}" has output contract errors\n`);
+      for (const err of validateResult.errors) {
+        process.stderr.write(`   [${err.step}] ${err.message}\n`);
+        if (err.suggestion) process.stderr.write(`      💡 ${err.suggestion}\n`);
+      }
+      process.stderr.write(`\nFix the workflow.yml and re-run validation before starting a run.\n`);
+      process.exit(1);
+    }
+
     let notifyUrl: string | undefined;
+    let repoPath: string | undefined;
+    let scope: string | undefined;
+    let focusAreas: string | undefined;
     const runArgs = args.slice(3);
-    const nuIdx = runArgs.indexOf("--notify-url");
+    // Parse both "--flag value" and "--flag=value" formats
+    function extractFlag(flag: string): string | undefined {
+      const eqIdx = flag.indexOf("=");
+      if (eqIdx !== -1) return flag.slice(eqIdx + 1);
+      return undefined;
+    }
+    // Bug #25 fix: parse --context KEY=value pairs (supports multiple --context flags)
+    // Handles BOTH "--context KEY=value" (space) and "--context=KEY=value" (equals) formats
+    const contextArgs: Record<string, string> = {};
+    for (let ci = runArgs.length - 1; ci >= 0; ci--) {
+      const arg = runArgs[ci];
+      if (arg.startsWith("--context=")) {
+        // --context=KEY=value format (value embedded in flag)
+        const val = arg.slice("--context=".length);
+        const eqIdx = val.indexOf("=");
+        if (eqIdx !== -1) {
+          contextArgs[val.slice(0, eqIdx)] = val.slice(eqIdx + 1);
+        }
+        runArgs.splice(ci, 1); // remove only the flag
+      } else if (arg === "--context") {
+        // --context KEY=value format (value on next line)
+        const val = runArgs[ci + 1];
+        const eqIdx = val?.indexOf("=") ?? -1;
+        if (eqIdx !== -1 && val) {
+          contextArgs[val.slice(0, eqIdx)] = val.slice(eqIdx + 1);
+          runArgs.splice(ci, 2); // remove BOTH flag AND value
+        } else {
+          runArgs.splice(ci, 1);
+        }
+      }
+    }
+    // Process in reverse order so splicing doesn't invalidate earlier indices
+    const faIdx = runArgs.findIndex(a => a === "--focus-areas" || a.startsWith("--focus-areas="));
+    if (faIdx !== -1) {
+      const val = extractFlag(runArgs[faIdx]);
+      focusAreas = val ?? runArgs[faIdx + 1];
+      runArgs.splice(faIdx, val ? 1 : 2);
+    }
+    const scIdx = runArgs.findIndex(a => a === "--scope" || a.startsWith("--scope="));
+    if (scIdx !== -1) {
+      const val = extractFlag(runArgs[scIdx]);
+      scope = val ?? runArgs[scIdx + 1];
+      runArgs.splice(scIdx, val ? 1 : 2);
+    }
+    const rpIdx = runArgs.findIndex(a => a === "--repo-path" || a.startsWith("--repo-path="));
+    if (rpIdx !== -1) {
+      const val = extractFlag(runArgs[rpIdx]);
+      repoPath = val ?? runArgs[rpIdx + 1];
+      runArgs.splice(rpIdx, val ? 1 : 2);
+    }
+    const nuIdx = runArgs.findIndex(a => a === "--notify-url" || a.startsWith("--notify-url="));
     if (nuIdx !== -1) {
-      notifyUrl = runArgs[nuIdx + 1];
-      runArgs.splice(nuIdx, 2);
+      const val = extractFlag(runArgs[nuIdx]);
+      notifyUrl = val ?? runArgs[nuIdx + 1];
+      runArgs.splice(nuIdx, val ? 1 : 2);
     }
     const taskTitle = runArgs.join(" ").trim();
     if (!taskTitle) { process.stderr.write("Missing task title.\n"); printUsage(); process.exit(1); }
-    const run = await runWorkflow({ workflowId: target, taskTitle, notifyUrl });
+    const run = await runWorkflow({ workflowId: target, taskTitle, notifyUrl, repoPath, scope, focusAreas, context: contextArgs });
     process.stdout.write(
       [`Run: #${run.runNumber} (${run.id})`, `Workflow: ${run.workflowId}`, `Task: ${run.task}`, `Status: ${run.status}`].join("\n") + "\n",
     );

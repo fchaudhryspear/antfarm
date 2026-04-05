@@ -1,0 +1,275 @@
+id: swarm-requirements-v1
+name: Product Requirements Swarm v1.0
+version: 1.0
+workflow_objective: Transform a plain-text feature request into a structured Product Requirements Document (PRD) with user stories, technical feasibility, UX flows, and security requirements.
+description: |
+  Phase 1 of the OpenClaw Full SDLC Pipeline.
+  Takes a plain-text feature request and produces a structured PRD JSON that
+  downstream swarms (architecture, implementation) can consume deterministically.
+
+  6 agents: intake-parser → 4 parallel specialists → prd-compiler consolidator.
+  The PRD includes user stories with acceptance criteria, technical feasibility
+  assessment, UX flow definitions, and security/compliance requirements.
+
+  v1.0: Initial release.
+
+context:
+  feature_request: ""    # REQUIRED: --context feature_request="Add billing..."
+  repo_path: ""          # REQUIRED: --repo-path=/path/to/repo (for feasibility analysis)
+  repo_name: ""          # REQUIRED: --context repo_name=my-project
+  tech_stack: "auto"     # Override if auto-detect is wrong
+  target_users: "auto"   # Override target user segment
+  exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
+
+acceptance_criteria:
+  - "intake-parser extracts feature name, target users, business context"
+  - "product-strategist produces user stories with acceptance criteria"
+  - "technical-feasibility evaluates against existing codebase"
+  - "ux-flow-designer defines flows with error/edge/loading/empty states"
+  - "security-compliance identifies auth, data classification, and compliance needs"
+  - "prd-compiler produces valid PRD JSON at docs/prd/<feature-name>.json"
+  - "Open questions aggregated for human review"
+
+polling:
+  model: ollama-cloud/deepseek-v3.2:cloud
+  delivery:
+    channel: telegram
+  timeoutSeconds: 3600
+
+agents:
+  - id: intake-parser
+    name: Intake Parser
+    role: analysis
+    workspace:
+      baseDir: agents/intake-parser
+      files:
+        AGENTS.md: agents/intake-parser/AGENTS.md
+    model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
+
+  - id: product-strategist
+    name: Product Strategist
+    role: analysis
+    workspace:
+      baseDir: agents/product-strategist
+      files:
+        AGENTS.md: agents/product-strategist/AGENTS.md
+    model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
+
+  - id: technical-feasibility
+    name: Technical Feasibility Analyst
+    role: analysis
+    workspace:
+      baseDir: agents/technical-feasibility
+      files:
+        AGENTS.md: agents/technical-feasibility/AGENTS.md
+    model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
+
+  - id: ux-flow-designer
+    name: UX Flow Designer
+    role: analysis
+    workspace:
+      baseDir: agents/ux-flow-designer
+      files:
+        AGENTS.md: agents/ux-flow-designer/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
+
+  - id: security-compliance
+    name: Security & Compliance Analyst
+    role: analysis
+    workspace:
+      baseDir: agents/security-compliance
+      files:
+        AGENTS.md: agents/security-compliance/AGENTS.md
+    model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
+
+  - id: prd-compiler
+    name: PRD Compiler
+    role: analysis
+    workspace:
+      baseDir: agents/prd-compiler
+      files:
+        AGENTS.md: agents/prd-compiler/AGENTS.md
+    model: ollama-cloud/glm-5:cloud
+    delivery:
+      channel: telegram
+
+steps:
+  - id: intake
+    agent: intake-parser
+    timeout_minutes: 25
+    expects: 'INTAKE_PARSED:'
+    timeoutSeconds: 300
+    max_retries: 2
+    input: |
+      TASK: Parse the following feature request and extract structured intake data.
+
+      FEATURE_REQUEST: {{ feature_request }}
+
+      REPO_NAME: {{ repo_name }}
+      TECH_STACK_HINT: {{ tech_stack }}
+      TARGET_USERS_HINT: {{ target_users }}
+
+      Parse the request. Extract feature name, target users, business context,
+      stated constraints, and stated success criteria.
+
+      Extract at most 10 key requirements from the feature request.
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata. Exclude from all file operations: {{ exclude_patterns }}
+
+  - id: product-analysis
+    agent: product-strategist
+    depends_on: [intake]
+    timeout_minutes: 25
+    expects: 'PRODUCT_ANALYSIS:'
+    timeoutSeconds: 1800
+    max_retries: 2
+    input: |
+      TASK: Define user stories, acceptance criteria, success metrics, and scope
+      for the following feature.
+
+      INTAKE: {{ steps.intake.summary }}
+
+      FEATURE_REQUEST: {{ feature_request }}
+      REPO_NAME: {{ repo_name }}
+
+      Produce structured product analysis with user stories, scope boundaries,
+      and open questions.
+
+      Produce a maximum of 10 user stories. If more are needed, note them as 'deferred stories' with brief descriptions. List a maximum of 5 open questions.
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata. Exclude from all file operations: {{ exclude_patterns }}
+
+  - id: tech-feasibility
+    agent: technical-feasibility
+    depends_on: [intake]
+    timeout_minutes: 25
+    expects: 'TECH_FEASIBILITY:'
+    timeoutSeconds: 1800
+    max_retries: 2
+    input: |
+      TASK: Evaluate technical feasibility of the feature against the existing codebase.
+
+      INTAKE: {{ steps.intake.summary }}
+
+      FEATURE_REQUEST: {{ feature_request }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      Analyze the existing codebase. Identify reusable components, new build requirements,
+      integration points, third-party dependencies, and tech risks.
+
+      Identify a maximum of 10 integration points. List a maximum of 5 tech risks.
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata. Exclude from all file operations: {{ exclude_patterns }}
+
+  - id: ux-flows
+    agent: ux-flow-designer
+    depends_on: [intake]
+    timeout_minutes: 25
+    expects: 'UX_FLOWS:'
+    timeoutSeconds: 1800
+    max_retries: 2
+    input: |
+      TASK: Design user flows for the feature including error states, edge cases,
+      loading states, empty states, and accessibility requirements.
+
+      INTAKE: {{ steps.intake.summary }}
+
+      FEATURE_REQUEST: {{ feature_request }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      Read existing UI components to understand current patterns.
+      Design flows that match existing UX conventions.
+
+      Define a maximum of 8 user flows. Each flow must include error, loading, and empty states.
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata. Exclude from all file operations: {{ exclude_patterns }}
+
+  - id: security-analysis
+    agent: security-compliance
+    depends_on: [intake]
+    timeout_minutes: 25
+    expects: 'SECURITY_ANALYSIS:'
+    timeoutSeconds: 1800
+    max_retries: 2
+    input: |
+      TASK: Identify security and compliance requirements for the feature.
+
+      INTAKE: {{ steps.intake.summary }}
+
+      FEATURE_REQUEST: {{ feature_request }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      Analyze authentication/authorization needs, data sensitivity, input validation,
+      rate limiting, audit logging, and regulatory considerations.
+
+      Identify a maximum of 10 security/compliance requirements.
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata. Exclude from all file operations: {{ exclude_patterns }}
+
+  - id: compile-prd
+    agent: prd-compiler
+    depends_on:
+      - product-analysis
+      - tech-feasibility
+      - ux-flows
+      - security-analysis
+    timeout_minutes: 25
+    expects: 'PRD_STATUS:'
+    timeoutSeconds: 2700
+    max_retries: 2
+    input: |
+      TASK: Compile all specialist outputs into a unified PRD JSON document.
+
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      FEATURE_REQUEST: {{ feature_request }}
+
+      PRODUCT ANALYSIS: {{ steps.product-analysis.summary }}
+
+      TECHNICAL FEASIBILITY: {{ steps.tech-feasibility.summary }}
+
+      UX FLOWS: {{ steps.ux-flows.summary }}
+
+      SECURITY ANALYSIS: {{ steps.security-analysis.summary }}
+
+      Resolve conflicts between specialists. Aggregate open questions.
+      Write the PRD JSON to docs/prd/<feature-name>.json in the repo.
+      Verify the JSON is valid and all sections are populated.
+
+      The final PRD JSON must contain all sections. Validate the JSON is parseable before finishing. After writing the JSON, re-read the file and confirm it parses correctly — if it doesn't, fix it.
+
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata. Exclude from all file operations: {{ exclude_patterns }}
+
+hooks:
+  onSuccess:
+    - type: log
+      message: "Requirements swarm completed successfully"
+    - type: notify
+      message: |
+        Requirements swarm completed!
+        PRD written to docs/prd/<feature>.json
+        Task: {{ task }}
+  onFailure:
+    - type: log
+      message: "Requirements swarm failed"
+    - type: notify
+      message: |
+        Requirements swarm failed
+        Error: {{ error }}
+        Failed at step: {{ failed_step }}
