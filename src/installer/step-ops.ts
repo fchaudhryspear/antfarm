@@ -16,6 +16,37 @@ import { isFrontendChange } from "../lib/frontend-detect.js";
 import { ping as heartbeatPing, clearSession as heartbeatClear } from "../heartbeat-service.js";
 import type { WorkflowStepFailure } from "./types.js";
 
+// ── Model Escalation on Retry ───────────────────────────────────────
+// When a step retries, escalate to a more capable model tier.
+// Order: default → sonnet → opus (most capable).
+const MODEL_ESCALATION_TIERS = ["default", "sonnet", "opus"];
+
+/**
+ * Given the current model (or null), return the next tier up.
+ * Returns null if already at the highest tier.
+ */
+function getEscalatedModel(currentModel: string | null): string | null {
+  const current = currentModel ?? "default";
+  const idx = MODEL_ESCALATION_TIERS.indexOf(current);
+  if (idx === -1) return MODEL_ESCALATION_TIERS[MODEL_ESCALATION_TIERS.length - 1]; // unknown → max
+  if (idx >= MODEL_ESCALATION_TIERS.length - 1) return null; // already at top
+  return MODEL_ESCALATION_TIERS[idx + 1];
+}
+
+/**
+ * Escalate the model for a step and persist to DB.
+ * Returns the new model name, or null if already at max tier.
+ */
+function escalateStepModel(stepId: string): string | null {
+  const db = getDb();
+  const row = db.prepare("SELECT escalated_model FROM steps WHERE id = ?").get(stepId) as { escalated_model: string | null } | undefined;
+  const newModel = getEscalatedModel(row?.escalated_model ?? null);
+  if (newModel) {
+    db.prepare("UPDATE steps SET escalated_model = ? WHERE id = ?").run(newModel, stepId);
+  }
+  return newModel;
+}
+
 /**
  * Parse KEY: value lines from step output with support for multi-line values.
  * Accumulates continuation lines until the next KEY: boundary or end of output.
@@ -374,7 +405,10 @@ export function cleanupAbandonedSteps(): void {
       db.prepare(
         "UPDATE steps SET status = 'pending', abandoned_count = ?, updated_at = datetime('now') WHERE id = ?"
       ).run(newAbandonCount, step.id);
-      const reminderMsg = `⚠️ Retry ${newAbandonCount}/${MAX_ABANDON_RESETS} — step "${step.step_id}" was abandoned ${newAbandonCount} times. Agent should review context and complete without dropping.`;
+      // Model escalation on abandonment retry
+      const escalatedModel = escalateStepModel(step.id);
+      const escalationNote = escalatedModel ? ` Model escalated to ${escalatedModel}.` : "";
+      const reminderMsg = `⚠️ Retry ${newAbandonCount}/${MAX_ABANDON_RESETS} — step "${step.step_id}" was abandoned ${newAbandonCount} times.${escalationNote} Agent should review context and complete without dropping.`;
       emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: reminderMsg });
     }
   }
@@ -518,6 +552,7 @@ interface ClaimResult {
   stepId?: string;
   runId?: string;
   resolvedInput?: string;
+  escalatedModel?: string | null;
 }
 
 /**
@@ -547,7 +582,7 @@ export function claimStep(agentId: string): ClaimResult {
   const step = (
     // Parallel path: find pending steps for this agent where the run has parallel steps
     db.prepare(
-      `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.step_index
+      `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.step_index, s.escalated_model
        FROM steps s
        JOIN runs r ON r.id = s.run_id
        WHERE s.agent_id = ? AND s.status = 'pending'
@@ -561,7 +596,7 @@ export function claimStep(agentId: string): ClaimResult {
     ).get(agentId) ??
     // Sequential fallback: no parallel steps in run, enforce step_index ordering
     db.prepare(
-      `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.step_index
+      `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.step_index, s.escalated_model
        FROM steps s
        JOIN runs r ON r.id = s.run_id
        WHERE s.agent_id = ? AND s.status = 'pending'
@@ -579,6 +614,7 @@ export function claimStep(agentId: string): ClaimResult {
     id: string; step_id: string; run_id: string; input_template: string; type: string;
     loop_config: string | null;
     step_index: number;
+    escalated_model: string | null;
   } | undefined;
 
   if (!step) return { found: false };
@@ -707,7 +743,7 @@ export function claimStep(agentId: string): ClaimResult {
       const resolvedInput = resolveTemplate(step.input_template, context);
       // Heartbeat: register session for liveness tracking (Issue #339)
       heartbeatPing(agentId, step.id, step.run_id);
-      return { found: true, stepId: step.id, runId: step.run_id, resolvedInput };
+      return { found: true, stepId: step.id, runId: step.run_id, resolvedInput, escalatedModel: step.escalated_model };
     }
   }
 
@@ -741,6 +777,7 @@ export function claimStep(agentId: string): ClaimResult {
     stepId: step.id,
     runId: step.run_id,
     resolvedInput,
+    escalatedModel: step.escalated_model,
   };
 }
 
@@ -1182,9 +1219,14 @@ export async function failStep(stepId: string, error: string): Promise<{ retryin
         return { retrying: false, runFailed: true };
       }
 
-      // Retry the story
+      // Retry the story — escalate model tier
       db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(newRetry, story.id);
       db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = datetime('now') WHERE id = ?").run(stepId);
+      const escalatedModel = escalateStepModel(stepId);
+      if (escalatedModel) {
+        logger.info(`Model escalated to "${escalatedModel}" on story retry ${newRetry}`, { runId: step.run_id, stepId: step.step_id });
+        emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Model escalated to ${escalatedModel} on retry` });
+      }
       return { retrying: true, runFailed: false };
     }
   }
@@ -1209,6 +1251,12 @@ export async function failStep(stepId: string, error: string): Promise<{ retryin
     db.prepare(
       "UPDATE steps SET status = 'pending', retry_count = ?, updated_at = datetime('now') WHERE id = ?"
     ).run(newRetryCount, stepId);
+    // Model escalation on retry
+    const escalatedModel = escalateStepModel(stepId);
+    if (escalatedModel) {
+      logger.info(`Model escalated to "${escalatedModel}" on retry ${newRetryCount}`, { runId: step.run_id, stepId: step.step_id });
+      emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Model escalated to ${escalatedModel} on retry ${newRetryCount}` });
+    }
     return { retrying: true, runFailed: false };
   }
 }
