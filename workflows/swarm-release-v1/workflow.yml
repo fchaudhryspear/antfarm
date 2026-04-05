@@ -34,18 +34,22 @@ acceptance_criteria:
   - "Version tag is consistent across all outputs"
 
 polling:
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/deepseek-v3.2:cloud
+  delivery:
+    channel: telegram
   timeoutSeconds: 5400
 
 agents:
   - id: deploy-staging
     name: Staging Deployer
-    role: deployment
+    role: coding
     workspace:
       baseDir: agents/deploy-staging
       files:
         AGENTS.md: agents/deploy-staging/AGENTS.md
     model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
 
   - id: smoke-tester
     name: Smoke Tester
@@ -55,28 +59,35 @@ agents:
       files:
         AGENTS.md: agents/smoke-tester/AGENTS.md
     model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
 
   - id: release-notes
     name: Release Notes Generator
-    role: documentation
+    role: coding
     workspace:
       baseDir: agents/release-notes
       files:
         AGENTS.md: agents/release-notes/AGENTS.md
     model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
 
   - id: release-compiler
     name: Release Compiler
-    role: consolidation
+    role: analysis
     workspace:
       baseDir: agents/release-compiler
       files:
         AGENTS.md: agents/release-compiler/AGENTS.md
     model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
 
 steps:
   - id: deploy
     agent: deploy-staging
+    timeout_minutes: 30
     expects: 'DEPLOY_STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -120,6 +131,7 @@ steps:
   - id: smoke
     agent: smoke-tester
     depends_on: [deploy]
+    timeout_minutes: 35
     expects: 'SMOKE_STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -168,6 +180,7 @@ steps:
   - id: changelog
     agent: release-notes
     depends_on: [deploy]
+    timeout_minutes: 30
     expects: 'RELEASE_NOTES_STATUS:'
     timeoutSeconds: 2700
     max_retries: 2
@@ -220,6 +233,7 @@ steps:
     depends_on:
       - smoke
       - changelog
+    timeout_minutes: 25
     expects: 'RELEASE_STATUS:'
     timeoutSeconds: 2700
     max_retries: 2

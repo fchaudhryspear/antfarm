@@ -73,108 +73,132 @@ acceptance_criteria:
   - "If verify=true: post-review step runs against changed files only; outputs VERIFY_STATUS"
 
 polling:
-  model: ollama-cloud/kimi-k2.5:cloud
+  model: ollama-cloud/deepseek-v3.2:cloud
+  delivery:
+    channel: telegram
   timeoutSeconds: 7200
 
 agents:
   - id: setup
     name: Setup
-    role: setup
+    role: coding
     workspace:
       baseDir: agents/setup
       files:
         AGENTS.md: agents/setup/AGENTS.md
     model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
 
   - id: fix-code-quality
     name: Code Quality Fixer
-    role: fix
+    role: coding
     workspace:
       baseDir: agents/fix-code-quality
       files:
         AGENTS.md: agents/fix-code-quality/AGENTS.md
     model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
 
   - id: fix-security
     name: Security Fixer
-    role: fix
+    role: coding
     workspace:
       baseDir: agents/fix-security
       files:
         AGENTS.md: agents/fix-security/AGENTS.md
     model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
 
   - id: fix-performance
     name: Performance Fixer
-    role: fix
+    role: coding
     workspace:
       baseDir: agents/fix-performance
       files:
         AGENTS.md: agents/fix-performance/AGENTS.md
     model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
 
   - id: fix-ux
     name: UX Fixer
-    role: fix
+    role: coding
     workspace:
       baseDir: agents/fix-ux
       files:
         AGENTS.md: agents/fix-ux/AGENTS.md
     model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
 
   - id: fix-backend
     name: Backend Fixer
-    role: fix
+    role: coding
     workspace:
       baseDir: agents/fix-backend
       files:
         AGENTS.md: agents/fix-backend/AGENTS.md
     model: ollama-cloud/qwen3-coder:480b-cloud
+    delivery:
+      channel: telegram
 
   - id: fix-frontend
     name: Frontend Fixer
-    role: fix
+    role: coding
     workspace:
       baseDir: agents/fix-frontend
       files:
         AGENTS.md: agents/fix-frontend/AGENTS.md
     model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
 
   - id: fix-devops
     name: DevOps Fixer
-    role: fix
+    role: coding
     workspace:
       baseDir: agents/fix-devops
       files:
         AGENTS.md: agents/fix-devops/AGENTS.md
     model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
 
   - id: fix-docs
     name: Documentation Fixer
-    role: fix
+    role: coding
     workspace:
       baseDir: agents/fix-docs
       files:
         AGENTS.md: agents/fix-docs/AGENTS.md
     model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
 
   - id: fix-tests
     name: Testing Fixer
-    role: fix
+    role: coding
     workspace:
       baseDir: agents/fix-tests
       files:
         AGENTS.md: agents/fix-tests/AGENTS.md
     model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
 
   - id: fix-product
     name: Product Fixer
-    role: fix
+    role: coding
     workspace:
       baseDir: agents/fix-product
       files:
         AGENTS.md: agents/fix-product/AGENTS.md
     model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
 
   - id: consolidate-pr
     name: PR Consolidator
@@ -184,19 +208,24 @@ agents:
       files:
         AGENTS.md: agents/consolidate-pr/AGENTS.md
     model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
 
   - id: post-review
     name: Post-Fix Reviewer
-    role: review
+    role: analysis
     workspace:
       baseDir: agents/post-review
       files:
         AGENTS.md: agents/post-review/AGENTS.md
     model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
 
 steps:
   - id: setup
     agent: setup
+    timeout_minutes: 30
     expects: 'SETUP_OK:'
     timeoutSeconds: 300
     max_retries: 2
@@ -250,6 +279,7 @@ steps:
   - id: fix-code-quality
     agent: fix-code-quality
     depends_on: [setup]
+    timeout_minutes: 30
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -286,6 +316,7 @@ steps:
   - id: fix-security
     agent: fix-security
     depends_on: [setup]
+    timeout_minutes: 30
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -323,6 +354,7 @@ steps:
   - id: fix-performance
     agent: fix-performance
     depends_on: [setup]
+    timeout_minutes: 30
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -359,6 +391,7 @@ steps:
   - id: fix-ux
     agent: fix-ux
     depends_on: [setup]
+    timeout_minutes: 30
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -395,6 +428,7 @@ steps:
   - id: fix-backend
     agent: fix-backend
     depends_on: [setup]
+    timeout_minutes: 30
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -431,6 +465,7 @@ steps:
   - id: fix-frontend
     agent: fix-frontend
     depends_on: [setup]
+    timeout_minutes: 30
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -467,6 +502,7 @@ steps:
   - id: fix-devops
     agent: fix-devops
     depends_on: [setup]
+    timeout_minutes: 30
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -503,6 +539,7 @@ steps:
   - id: fix-docs
     agent: fix-docs
     depends_on: [setup]
+    timeout_minutes: 30
     expects: 'STATUS:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -536,6 +573,7 @@ steps:
   - id: fix-tests
     agent: fix-tests
     depends_on: [setup]
+    timeout_minutes: 30
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -571,6 +609,7 @@ steps:
   - id: fix-product
     agent: fix-product
     depends_on: [setup]
+    timeout_minutes: 30
     expects: 'STATUS:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -614,6 +653,7 @@ steps:
       - fix-docs
       - fix-tests
       - fix-product
+    timeout_minutes: 30
     expects: 'PR_URL:'
     timeoutSeconds: 2700   # 45 min — allows bisect cycles
     max_retries: 2
@@ -649,6 +689,7 @@ steps:
   - id: post-review
     agent: post-review
     depends_on: [consolidate-pr]
+    timeout_minutes: 25
     expects: 'VERIFY_STATUS:'
     timeoutSeconds: 3600
     max_retries: 1

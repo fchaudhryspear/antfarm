@@ -29,18 +29,22 @@ acceptance_criteria:
   - "No test files created in {{ exclude_patterns }} directories"
 
 polling:
-  model: ollama-cloud/kimi-k2.5:cloud
+  model: ollama-cloud/deepseek-v3.2:cloud
+  delivery:
+    channel: telegram
   timeoutSeconds: 7200
 
 agents:
   - id: acceptance-validator
     name: Acceptance Validator
-    role: validation
+    role: coding
     workspace:
       baseDir: agents/acceptance-validator
       files:
         AGENTS.md: agents/acceptance-validator/AGENTS.md
     model: ollama-cloud/glm-5:cloud
+    delivery:
+      channel: telegram
 
   - id: e2e-tester
     name: E2E Tester
@@ -50,6 +54,8 @@ agents:
       files:
         AGENTS.md: agents/e2e-tester/AGENTS.md
     model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
 
   - id: load-tester
     name: Load Tester
@@ -59,6 +65,8 @@ agents:
       files:
         AGENTS.md: agents/load-tester/AGENTS.md
     model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
 
   - id: regression-checker
     name: Regression Checker
@@ -68,19 +76,24 @@ agents:
       files:
         AGENTS.md: agents/regression-checker/AGENTS.md
     model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
 
   - id: qa-compiler
     name: QA Compiler
-    role: consolidation
+    role: analysis
     workspace:
       baseDir: agents/qa-compiler
       files:
         AGENTS.md: agents/qa-compiler/AGENTS.md
     model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
 
 steps:
   - id: acceptance-check
     agent: acceptance-validator
+    timeout_minutes: 30
     expects: 'ACCEPTANCE_RESULT:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -116,6 +129,7 @@ steps:
 
   - id: e2e-test
     agent: e2e-tester
+    timeout_minutes: 35
     expects: 'E2E_RESULT:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -154,6 +168,7 @@ steps:
 
   - id: load-test
     agent: load-tester
+    timeout_minutes: 35
     expects: 'LOAD_RESULT:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -186,6 +201,7 @@ steps:
 
   - id: regression-check
     agent: regression-checker
+    timeout_minutes: 35
     expects: 'REGRESSION_RESULT:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -228,6 +244,7 @@ steps:
       - e2e-test
       - load-test
       - regression-check
+    timeout_minutes: 25
     expects: 'QA_STATUS:'
     timeoutSeconds: 2700
     max_retries: 2

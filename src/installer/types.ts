@@ -56,6 +56,8 @@ export type WorkflowStep = {
   expects: string;
   max_retries?: number;
   on_fail?: WorkflowStepFailure;
+  /** Per-step timeout in minutes (Issue #341). Defaults by role: review=25, fix=30, testing=35. */
+  timeout_minutes?: number;
 };
 
 export type Story = {

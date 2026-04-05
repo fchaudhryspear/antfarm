@@ -66,7 +66,7 @@ acceptance_criteria:
   - "Feature branch has all implementation + fixes committed"
 
 polling:
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/deepseek-v3.2:cloud
   timeoutSeconds: 64800  # 18 hours max for full pipeline
 
 agents:
@@ -121,6 +121,7 @@ steps:
   # ═══════════════════════════════════════════════════════════
   - id: assess-complexity
     agent: complexity-assessor
+    timeout_minutes: 25
     expects: 'TIER:'
     timeoutSeconds: 120
     max_retries: 1
@@ -143,6 +144,7 @@ steps:
   - id: dispatch-requirements
     agent: pipeline-controller
     depends_on: [assess-complexity]
+    timeout_minutes: 25
     expects: 'REQUIREMENTS_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -183,6 +185,7 @@ steps:
   - id: gate-requirements
     agent: gate-keeper
     depends_on: [dispatch-requirements]
+    timeout_minutes: 25
     expects: 'GATE_STATUS:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -212,6 +215,7 @@ steps:
   - id: dispatch-architecture
     agent: pipeline-controller
     depends_on: [gate-requirements]
+    timeout_minutes: 25
     expects: 'ARCHITECTURE_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -253,6 +257,7 @@ steps:
   - id: gate-architecture
     agent: gate-keeper
     depends_on: [dispatch-architecture]
+    timeout_minutes: 25
     expects: 'GATE_STATUS:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -282,6 +287,7 @@ steps:
   - id: dispatch-implementation
     agent: pipeline-controller
     depends_on: [gate-architecture]
+    timeout_minutes: 25
     expects: 'IMPLEMENTATION_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -320,6 +326,7 @@ steps:
   - id: dispatch-review
     agent: pipeline-controller
     depends_on: [dispatch-implementation]
+    timeout_minutes: 25
     expects: 'REVIEW_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -361,6 +368,7 @@ steps:
   - id: dispatch-fix
     agent: pipeline-controller
     depends_on: [dispatch-review]
+    timeout_minutes: 25
     expects: 'FIX_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -398,6 +406,7 @@ steps:
   - id: dispatch-qa
     agent: pipeline-controller
     depends_on: [dispatch-fix]
+    timeout_minutes: 25
     expects: 'QA_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -458,6 +467,7 @@ steps:
   - id: dispatch-release
     agent: pipeline-controller
     depends_on: [dispatch-qa]
+    timeout_minutes: 25
     expects: 'RELEASE_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -503,6 +513,7 @@ steps:
   - id: final-report
     agent: pipeline-reporter
     depends_on: [dispatch-release]
+    timeout_minutes: 25
     expects: 'PIPELINE_REPORT:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -545,6 +556,7 @@ steps:
   - id: retrospective
     agent: retrospective
     depends_on: [final-report]
+    timeout_minutes: 25
     expects: 'RETRO_STATUS:'
     timeoutSeconds: 1800
     max_retries: 2

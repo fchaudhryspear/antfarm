@@ -31,18 +31,22 @@ acceptance_criteria:
   - "Open questions aggregated for human review"
 
 polling:
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/deepseek-v3.2:cloud
+  delivery:
+    channel: telegram
   timeoutSeconds: 3600
 
 agents:
   - id: intake-parser
     name: Intake Parser
-    role: parsing
+    role: analysis
     workspace:
       baseDir: agents/intake-parser
       files:
         AGENTS.md: agents/intake-parser/AGENTS.md
     model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
 
   - id: product-strategist
     name: Product Strategist
@@ -52,6 +56,8 @@ agents:
       files:
         AGENTS.md: agents/product-strategist/AGENTS.md
     model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
 
   - id: technical-feasibility
     name: Technical Feasibility Analyst
@@ -61,6 +67,8 @@ agents:
       files:
         AGENTS.md: agents/technical-feasibility/AGENTS.md
     model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
 
   - id: ux-flow-designer
     name: UX Flow Designer
@@ -70,6 +78,8 @@ agents:
       files:
         AGENTS.md: agents/ux-flow-designer/AGENTS.md
     model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
 
   - id: security-compliance
     name: Security & Compliance Analyst
@@ -79,19 +89,24 @@ agents:
       files:
         AGENTS.md: agents/security-compliance/AGENTS.md
     model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
 
   - id: prd-compiler
     name: PRD Compiler
-    role: consolidation
+    role: analysis
     workspace:
       baseDir: agents/prd-compiler
       files:
         AGENTS.md: agents/prd-compiler/AGENTS.md
     model: ollama-cloud/glm-5:cloud
+    delivery:
+      channel: telegram
 
 steps:
   - id: intake
     agent: intake-parser
+    timeout_minutes: 25
     expects: 'INTAKE_PARSED:'
     timeoutSeconds: 300
     max_retries: 2
@@ -114,6 +129,7 @@ steps:
   - id: product-analysis
     agent: product-strategist
     depends_on: [intake]
+    timeout_minutes: 25
     expects: 'PRODUCT_ANALYSIS:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -136,6 +152,7 @@ steps:
   - id: tech-feasibility
     agent: technical-feasibility
     depends_on: [intake]
+    timeout_minutes: 25
     expects: 'TECH_FEASIBILITY:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -159,6 +176,7 @@ steps:
   - id: ux-flows
     agent: ux-flow-designer
     depends_on: [intake]
+    timeout_minutes: 25
     expects: 'UX_FLOWS:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -183,6 +201,7 @@ steps:
   - id: security-analysis
     agent: security-compliance
     depends_on: [intake]
+    timeout_minutes: 25
     expects: 'SECURITY_ANALYSIS:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -210,6 +229,7 @@ steps:
       - tech-feasibility
       - ux-flows
       - security-analysis
+    timeout_minutes: 25
     expects: 'PRD_STATUS:'
     timeoutSeconds: 2700
     max_retries: 2

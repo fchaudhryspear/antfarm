@@ -38,76 +38,95 @@ acceptance_criteria:
   - "Architecture JSON written to docs/architecture/<feature-name>.json"
   - "ADR count, endpoint count, component count all non-zero"
 polling:
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/deepseek-v3.2:cloud
+  delivery:
+    channel: telegram
   timeoutSeconds: 5400
 agents:
   - id: arch-intake
     name: Architecture Intake
-    role: intake
+    role: analysis
     workspace:
       baseDir: agents/arch-intake
       files:
         AGENTS.md: agents/arch-intake/AGENTS.md
     model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
   - id: system-architect
     name: System Architect
-    role: design
+    role: coding
     workspace:
       baseDir: agents/system-architect
       files:
         AGENTS.md: agents/system-architect/AGENTS.md
     model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
   - id: api-designer
     name: API Designer
-    role: design
+    role: coding
     workspace:
       baseDir: agents/api-designer
       files:
         AGENTS.md: agents/api-designer/AGENTS.md
     model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
   - id: data-architect
     name: Data Architect
-    role: design
+    role: coding
     workspace:
       baseDir: agents/data-architect
       files:
         AGENTS.md: agents/data-architect/AGENTS.md
     model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
   - id: frontend-architect
     name: Frontend Architect
-    role: design
+    role: coding
     workspace:
       baseDir: agents/frontend-architect
       files:
         AGENTS.md: agents/frontend-architect/AGENTS.md
     model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
   - id: devops-architect
     name: DevOps Architect
-    role: design
+    role: coding
     workspace:
       baseDir: agents/devops-architect
       files:
         AGENTS.md: agents/devops-architect/AGENTS.md
     model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
   - id: visual-designer
     name: Visual Designer
-    role: design
+    role: coding
     workspace:
       baseDir: agents/visual-designer
       files:
         AGENTS.md: agents/visual-designer/AGENTS.md
     model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
   - id: arch-compiler
     name: Architecture Compiler
-    role: compile
+    role: coding
     workspace:
       baseDir: agents/arch-compiler
       files:
         AGENTS.md: agents/arch-compiler/AGENTS.md
     model: ollama-cloud/deepseek-v3.2:cloud
+    delivery:
+      channel: telegram
 steps:
   - id: parse-prd
     agent: arch-intake
+    timeout_minutes: 25
     expects: 'ARCH_INTAKE_PARSED:'
     timeoutSeconds: 900
     input: |
@@ -140,6 +159,7 @@ steps:
   - id: system-design
     agent: system-architect
     depends_on: [parse-prd]
+    timeout_minutes: 30
     expects: 'ADR_'
     timeoutSeconds: 3600
     input: |
@@ -177,6 +197,7 @@ steps:
   - id: api-design-core
     agent: api-designer
     depends_on: [parse-prd]
+    timeout_minutes: 30
     expects: 'ENDPOINT_COUNT:'
     timeoutSeconds: 3600
     input: |
@@ -211,6 +232,7 @@ steps:
   - id: api-design-webhooks
     agent: api-designer
     depends_on: [parse-prd]
+    timeout_minutes: 30
     expects: 'WEBHOOK_EVENT_COUNT:'
     timeoutSeconds: 3600
     input: |
@@ -245,6 +267,7 @@ steps:
   - id: data-design
     agent: data-architect
     depends_on: [parse-prd]
+    timeout_minutes: 30
     expects: 'SCHEMA_CHANGES_COUNT:'
     timeoutSeconds: 3600
     input: |
@@ -275,6 +298,7 @@ steps:
   - id: frontend-design
     agent: frontend-architect
     depends_on: [parse-prd]
+    timeout_minutes: 30
     expects: 'COMPONENT_COUNT:'
     timeoutSeconds: 3600
     input: |
@@ -308,6 +332,7 @@ steps:
   - id: devops-design
     agent: devops-architect
     depends_on: [parse-prd]
+    timeout_minutes: 30
     expects: 'DEPLOYMENT_STRATEGY:'
     timeoutSeconds: 3600
     input: |
@@ -351,6 +376,7 @@ steps:
   - id: visual-design
     agent: visual-designer
     depends_on: [parse-prd]
+    timeout_minutes: 30
     expects: 'VISUAL_DESIGN:'
     timeoutSeconds: 3600
     max_retries: 2
@@ -396,6 +422,7 @@ steps:
       - frontend-design
       - devops-design
       - visual-design
+    timeout_minutes: 30
     expects: 'ARCH_STATUS:'
     timeoutSeconds: 5400
     input: |

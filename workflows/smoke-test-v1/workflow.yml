@@ -23,7 +23,9 @@ steps:
     name: Deploy staging Lambda
     agent: smoke-deployer
     model: minimax-m2.7:cloud
-    timeout: 300
+    delivery:
+      channel: telegram
+    timeout_minutes: 35
     input: |
       Deploy the staging Lambda function from {{ repo_path }}.
 
@@ -46,8 +48,10 @@ steps:
     name: Run 3 smoke tests
     agent: smoke-tester
     model: minimax-m2.7:cloud
+    delivery:
+      channel: telegram
     depends_on: [deploy]
-    timeout: 120
+    timeout_minutes: 35
     input: |
       Run 3 smoke tests against Lambda function {{ function_name }}.
 
@@ -81,9 +85,11 @@ steps:
     name: Create revert PR on failure
     agent: smoke-reverter
     model: minimax-m2.7:cloud
+    delivery:
+      channel: telegram
     depends_on: [smoke-test]
     condition: "SMOKE_PASS: false"
-    timeout: 120
+    timeout_minutes: 30
     input: |
       Smoke test failed. Create a revert PR in {{ repo_path }}.
 

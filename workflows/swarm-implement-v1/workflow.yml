@@ -46,7 +46,9 @@ acceptance_criteria:
   - "No hardcoded project names, paths, or IDs"
 
 polling:
-  model: ollama-cloud/kimi-k2.5:cloud
+  model: ollama-cloud/deepseek-v3.2:cloud
+  delivery:
+    channel: telegram
   intervalSeconds: 30
   timeoutSeconds: 180
 
@@ -57,6 +59,8 @@ agents:
       files:
         AGENTS.md: agents/scaffolder/AGENTS.md
     model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
     name: Scaffolder
     description: Foundation tasks — migrations, deps, infra template, config
 
@@ -66,6 +70,8 @@ agents:
       files:
         AGENTS.md: agents/backend-engineer/AGENTS.md
     model: ollama-cloud/qwen3-coder:480b-cloud
+    delivery:
+      channel: telegram
     name: Backend Engineer
     description: Backend implementation — models, repos, services, routes, tests
 
@@ -75,6 +81,8 @@ agents:
       files:
         AGENTS.md: agents/backend-engineer/AGENTS.md
     model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
     name: Backend Engineer B
     description: Parallel backend — webhook handlers, middleware
 
@@ -84,6 +92,8 @@ agents:
       files:
         AGENTS.md: agents/frontend-engineer-a/AGENTS.md
     model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
     name: Frontend Engineer A
     description: Frontend core — context, hooks, primary pages
 
@@ -93,6 +103,8 @@ agents:
       files:
         AGENTS.md: agents/frontend-engineer-b/AGENTS.md
     model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
     name: Frontend Engineer B
     description: Frontend secondary pages, admin views, tests
 
@@ -102,12 +114,15 @@ agents:
       files:
         AGENTS.md: agents/devops-engineer/AGENTS.md
     model: ollama-cloud/qwen3-coder-next:cloud
+    delivery:
+      channel: telegram
     name: DevOps Engineer
     description: Phase 4 — monitoring, alarms, E2E tests, load tests, runbooks
 
 steps:
   - id: phase-1-scaffold
     agent: scaffolder
+    timeout_minutes: 30
     input: |
       You are implementing Phase 1 (Foundation/Scaffold) for this project.
 
@@ -144,6 +159,7 @@ steps:
 
   - id: phase-2-models
     agent: backend-engineer
+    timeout_minutes: 30
     input: |
       You are implementing Phase 2 Band 1 (Data Models) for this project.
 
@@ -176,6 +192,7 @@ steps:
 
   - id: phase-2-repos
     agent: backend-engineer
+    timeout_minutes: 30
     input: |
       You are implementing Phase 2 Band 2 (Repositories/Data Access) for this project.
 
@@ -209,6 +226,7 @@ steps:
 
   - id: phase-2-services
     agent: backend-engineer
+    timeout_minutes: 30
     input: |
       You are implementing Phase 2 Band 3 (Services/Business Logic) for this project.
 
@@ -242,6 +260,7 @@ steps:
 
   - id: phase-2-handlers-crud
     agent: backend-engineer
+    timeout_minutes: 30
     input: |
       You are implementing Phase 2 Band 4a (API Route Handlers) for this project.
 
@@ -275,6 +294,7 @@ steps:
 
   - id: phase-2-handlers-webhooks
     agent: backend-engineer-b
+    timeout_minutes: 30
     input: |
       You are implementing Phase 2 Band 4b (Webhook/Event Handlers) for this project.
 
@@ -309,6 +329,7 @@ steps:
 
   - id: phase-2-middleware
     agent: backend-engineer-b
+    timeout_minutes: 30
     input: |
       You are implementing Phase 2 Band 5 (Middleware) for this project.
 
@@ -342,6 +363,7 @@ steps:
 
   - id: phase-2-tests-models
     agent: backend-engineer
+    timeout_minutes: 35
     input: |
       You are implementing Phase 2 Band 6a (Model & Repository Tests) for this project.
 
@@ -377,6 +399,7 @@ steps:
 
   - id: phase-2-tests-services
     agent: backend-engineer-b
+    timeout_minutes: 35
     input: |
       You are implementing Phase 2 Band 6b (Service Layer Tests) for this project.
 
@@ -412,6 +435,7 @@ steps:
 
   - id: phase-2-tests-handlers
     agent: backend-engineer
+    timeout_minutes: 35
     input: |
       You are implementing Phase 2 Band 6c (Handler & Middleware Tests) for this project.
 
@@ -450,6 +474,7 @@ steps:
   - id: phase-2-lint
     agent: backend-engineer
     depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers]
+    timeout_minutes: 30
     expects: "STATUS:"
     timeoutSeconds: 600
     max_retries: 1
@@ -477,6 +502,7 @@ steps:
 
   - id: phase-3-frontend-a
     agent: frontend-engineer-a
+    timeout_minutes: 30
     input: |
       You are implementing Phase 3 Frontend A (Core UI) for this project.
 
@@ -512,6 +538,7 @@ steps:
 
   - id: phase-3-frontend-b
     agent: frontend-engineer-b
+    timeout_minutes: 30
     input: |
       You are implementing Phase 3 Frontend B (Secondary Pages & Tests) for this project.
 
@@ -547,6 +574,7 @@ steps:
   - id: phase-3-lint
     agent: backend-engineer
     depends_on: [phase-3-frontend-a, phase-3-frontend-b]
+    timeout_minutes: 30
     expects: "STATUS:"
     timeoutSeconds: 600
     max_retries: 1
@@ -574,6 +602,7 @@ steps:
 
   - id: phase-4-devops
     agent: devops-engineer
+    timeout_minutes: 30
     input: |
       You are implementing Phase 4 (DevOps & Observability) for this project.
 
