@@ -87,6 +87,68 @@ FINDINGS: [count]
 [additional role-specific fields]
 ```
 
+## Few-Shot Examples for High-Retry Agents
+
+Adding concrete output examples to agent prompts dramatically reduces retry rates.
+Use these patterns for agents flagged with >10% retry rate.
+
+### Fix Agent (coding role) — Few-Shot Example
+
+Add this to the end of your fix agent's AGENTS.md:
+
+```
+## Example Output (COPY THIS FORMAT EXACTLY)
+
+STATUS: done
+CHANGES: Fixed SQL injection in login handler by parameterizing queries.
+  Replaced string concatenation with prepared statements in 2 functions.
+FILES_MODIFIED: src/auth/login.ts, src/auth/session.ts
+SCORE: 85
+```
+
+### Review Agent (analysis role) — Few-Shot Example
+
+```
+## Example Output (COPY THIS FORMAT EXACTLY)
+
+STATUS: done
+SCORE: 72
+FINDINGS: 3
+  - HIGH: SQL injection in src/auth/login.ts:42 — user input concatenated into query
+  - MEDIUM: Missing rate limiting on /api/login endpoint
+  - LOW: Debug logging enabled in production config
+```
+
+### PR Agent (pr role) — Few-Shot Example
+
+```
+## Example Output (COPY THIS FORMAT EXACTLY)
+
+STATUS: done
+PR_URL: https://github.com/org/repo/pull/123
+DOMAINS_INCLUDED: security, backend, frontend
+DOMAINS_EXCLUDED: none
+DEFERRED_LOG: none
+```
+
+### Skipped/Error Fallback Pattern
+
+Every agent should include a fallback for when it cannot complete:
+
+```
+If you have NO findings or NO changes to make, output:
+STATUS: skipped
+SCORE: 100
+FINDINGS: 0
+
+If you encounter an error you cannot recover from, output:
+STATUS: error
+SCORE: 0
+FINDINGS: 0
+CHANGES: none
+FILES_MODIFIED: none
+```
+
 ## Debugging High Retry Agents
 
 1. Run `antfarm agent-stats --agent <name>` to confirm retry rate
@@ -94,6 +156,18 @@ FINDINGS: [count]
 3. Review agent output in DB: the failed step's `output` column shows what was produced
 4. Common fixes:
    - Simplify the prompt (shorter = more reliable)
-   - Add explicit output examples
+   - Add explicit output examples (see few-shot section above)
    - Increase `max_retries` as a stopgap while tuning
    - Use `timeout_minutes` for agents that need more time
+
+## Automated Flagging
+
+The `agent_stats` SQLite table tracks per-agent metrics:
+- `agent_id`: Full agent identifier
+- `total_runs`: Number of step completions
+- `retries`: Number of retry events
+- `last_run_at`: Timestamp of most recent run
+
+Agents with >10% retry rate are automatically flagged by `antfarm agent-stats`.
+The stats module (`src/agent-retry-stats.ts`) is called from `completeStep` and
+`failStep` in the pipeline engine.

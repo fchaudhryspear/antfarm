@@ -18,6 +18,7 @@ import { ping as heartbeatPing, clearSession as heartbeatClear } from "../heartb
 import type { WorkflowStepFailure } from "./types.js";
 import { validateStepOutput } from "../validate-step-output.js";
 import { validateConsolidateInputs } from "../validate-consolidate-inputs.js";
+import { recordAgentRun, recordAgentRetry, getAgentStats } from "../agent-retry-stats.js";
 
 // ── Model Escalation on Retry ───────────────────────────────────────
 // When a step retries, escalate to a more capable model tier.
@@ -1529,73 +1530,6 @@ export async function failStep(stepId: string, error: string): Promise<{ retryin
 }
 
 // ── Issue #343: Agent Retry Stats (Prompt Tuning Framework) ──────────
-
-/**
- * Record a successful step completion for an agent.
- */
-export function recordAgentRun(agentId: string): void {
-  try {
-    const db = getDb();
-    db.prepare(`
-      INSERT INTO agent_stats (agent_id, total_runs, retries, last_run_at, updated_at)
-      VALUES (?, 1, 0, datetime('now'), datetime('now'))
-      ON CONFLICT(agent_id) DO UPDATE SET
-        total_runs = total_runs + 1,
-        last_run_at = datetime('now'),
-        updated_at = datetime('now')
-    `).run(agentId);
-  } catch { /* best-effort stats tracking */ }
-}
-
-/**
- * Record a retry event for an agent.
- */
-export function recordAgentRetry(agentId: string): void {
-  try {
-    const db = getDb();
-    db.prepare(`
-      INSERT INTO agent_stats (agent_id, total_runs, retries, last_run_at, updated_at)
-      VALUES (?, 1, 1, datetime('now'), datetime('now'))
-      ON CONFLICT(agent_id) DO UPDATE SET
-        total_runs = total_runs + 1,
-        retries = retries + 1,
-        last_run_at = datetime('now'),
-        updated_at = datetime('now')
-    `).run(agentId);
-  } catch { /* best-effort stats tracking */ }
-}
-
-/**
- * Get retry stats for all agents or a specific agent.
- * Returns agents sorted by retry rate descending.
- */
-export function getAgentStats(agentFilter?: string): Array<{
-  agent_id: string;
-  total_runs: number;
-  retries: number;
-  retry_rate: number;
-  last_run_at: string | null;
-  flagged: boolean;
-}> {
-  const db = getDb();
-  let rows: Array<{ agent_id: string; total_runs: number; retries: number; last_run_at: string | null }>;
-
-  if (agentFilter) {
-    rows = db.prepare(
-      "SELECT agent_id, total_runs, retries, last_run_at FROM agent_stats WHERE agent_id LIKE ? ORDER BY CAST(retries AS REAL) / MAX(total_runs, 1) DESC"
-    ).all(`%${agentFilter}%`) as typeof rows;
-  } else {
-    rows = db.prepare(
-      "SELECT agent_id, total_runs, retries, last_run_at FROM agent_stats ORDER BY CAST(retries AS REAL) / MAX(total_runs, 1) DESC"
-    ).all() as typeof rows;
-  }
-
-  return rows.map((r) => {
-    const retryRate = r.total_runs > 0 ? r.retries / r.total_runs : 0;
-    return {
-      ...r,
-      retry_rate: Math.round(retryRate * 1000) / 10, // percentage with 1 decimal
-      flagged: retryRate > 0.10, // >10% retry rate
-    };
-  });
-}
+// Now delegated to src/agent-retry-stats.ts (imported at top).
+// Re-export for backwards compatibility with cli.ts and other callers.
+export { recordAgentRun, recordAgentRetry, getAgentStats };
