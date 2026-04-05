@@ -16,6 +16,7 @@ import { resolveWorkflowDir } from "./paths.js";
 import { isFrontendChange } from "../lib/frontend-detect.js";
 import { ping as heartbeatPing, clearSession as heartbeatClear } from "../heartbeat-service.js";
 import type { WorkflowStepFailure } from "./types.js";
+import { validateStepOutput } from "../validate-step-output.js";
 
 // ── Model Escalation on Retry ───────────────────────────────────────
 // When a step retries, escalate to a more capable model tier.
@@ -49,49 +50,21 @@ function escalateStepModel(stepId: string): string | null {
 }
 
 // ── Issue #337: Output Schema Enforcement ────────────────────────────
-// Minimum required output fields per agent role. If a step's output is
-// empty or missing required fields, it auto-fails with retry.
-
-const ROLE_REQUIRED_FIELDS: Record<AgentRole, string[]> = {
-  analysis:     ["STATUS", "SCORE", "FINDINGS"],
-  coding:       ["STATUS", "CHANGES", "FILES_MODIFIED"],
-  verification: ["STATUS", "SCORE", "FINDINGS"],
-  testing:      ["STATUS", "SCORE", "FINDINGS"],
-  pr:           ["STATUS", "PR_URL"],
-  scanning:     ["STATUS", "SCORE", "FINDINGS"],
-};
+// Delegates to src/validate-step-output.ts for standalone validation.
+// This wrapper preserves the existing API used within step-ops.ts.
 
 /**
  * Validate step output against the required schema for the agent's role.
+ * Delegates to validateStepOutput (src/validate-step-output.ts).
  * Returns { valid: true } or { valid: false, missing: [...], reason: "..." }.
  */
 export function validateOutputSchema(
   output: string,
   agentId: string,
 ): { valid: true } | { valid: false; missing: string[]; reason: string } {
-  if (!output || output.trim().length === 0) {
-    return { valid: false, missing: ["*"], reason: "Output is empty" };
-  }
-
-  // Derive role from agent ID (strip workflow prefix)
-  const underscoreIdx = agentId.indexOf("_");
-  const localId = underscoreIdx > 0 ? agentId.slice(underscoreIdx + 1) : agentId;
-  const role = inferRole(localId);
-  const requiredFields = ROLE_REQUIRED_FIELDS[role];
-  if (!requiredFields || requiredFields.length === 0) return { valid: true };
-
-  const parsed = parseOutputKeyValues(output);
-  const presentKeys = new Set(Object.keys(parsed));
-
-  const missing = requiredFields.filter((field) => !presentKeys.has(field));
-  if (missing.length > 0) {
-    return {
-      valid: false,
-      missing,
-      reason: `Missing required fields for role "${role}": ${missing.join(", ")}`,
-    };
-  }
-  return { valid: true };
+  const result = validateStepOutput(output, agentId);
+  if (result.valid) return { valid: true };
+  return { valid: false, missing: result.missingFields, reason: result.reason };
 }
 
 // ── Issue #338: Single-Owner Finding Assignment ─────────────────────
