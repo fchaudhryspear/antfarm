@@ -1,0 +1,181 @@
+name: smoke-test-s3-v1
+version: "1.0"
+description: Post-deploy smoke test for S3 + CloudFront frontend deployment
+
+# Usage:
+#   antfarm workflow run smoke-test-s3-v1 "smoke test after portal deploy" CF_DISTRIBUTION_ID=EIVXYZ1234567 S3_BUCKET=portal.flobase.ai
+#
+# Context vars:
+#   cf_distribution_id   - CloudFront distribution ID
+#   s3_bucket           - S3 bucket name (e.g. portal.flobase.ai)
+#   portal_url          - Base portal URL (default: https://portal.flobase.ai)
+#   aws_profile         - AWS CLI profile (default: atlas)
+#   aws_region          - AWS region (default: us-east-1)
+
+context:
+  cf_distribution_id: "EIVXYZ1234567"
+  s3_bucket: "portal.flobase.ai"
+  portal_url: "https://portal.flobase.ai"
+  aws_profile: "atlas"
+  aws_region: "us-east-1"
+  critical_paths:
+    - "/"
+    - "/portal/performance"
+    - "/portal/investor"
+  critical_assets:
+    - "index.html"
+
+steps:
+  - id: wait-propagation
+    name: Wait for CloudFront invalidation to propagate
+    agent: smoke-s3-waiter
+    model: minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+    timeout_minutes: 5
+    input: |
+      Wait 90 seconds for CloudFront invalidation to propagate before running smoke tests.
+      This is the window where a cache-race blank page could occur.
+
+      sleep 90
+
+      Output: WAIT_COMPLETE: true
+
+  - id: check-invalidation-status
+    name: Verify CloudFront invalidation is complete
+    agent: smoke-s3-checker
+    model: minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+    depends_on: [wait-propagation]
+    timeout_minutes: 5
+    input: |
+      Check the status of the most recent CloudFront invalidation for distribution {{ cf_distribution_id }}.
+
+      aws cloudfront list-invalidations \
+        --distribution-id {{ cf_distribution_id }} \
+        --profile {{ aws_profile }} \
+        --region {{ aws_region }} \
+        --query 'InvalidationList.Items[*].[Id,Status]' \
+        --output table
+
+      Get the most recent invalidation ID and verify Status == "Completed".
+      If Status == "InProgress", wait up to 60 more seconds (poll every 15s).
+      If Status == "Completed", output: INVALIDATION_STATUS: completed
+      If still InProgress after 60s, output: INVALIDATION_STATUS: still_in_progress REASON: timeout_waiting
+
+  - id: smoke-index-page
+    name: Smoke test index page loads without 404
+    agent: smoke-s3-checker
+    model: minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+    depends_on: [check-invalidation-status]
+    timeout_minutes: 5
+    input: |
+      Fetch the index page and verify it loads without JS 404 errors.
+
+      1. Fetch index.html:
+         curl -s -o /tmp/smoke_index.html {{ portal_url }}/
+         curl -w "%{http_code}" -s -o /tmp/smoke_index.html {{ portal_url }}/
+
+      2. Extract all JS bundle references from index.html:
+         grep -oE 'index-[A-Za-z0-9]+\.js' /tmp/smoke_index.html | sort -u
+
+      3. For each JS bundle reference, verify it returns HTTP 200:
+         for bundle in $(grep -oE 'index-[A-Za-z0-9]+\.js' /tmp/smoke_index.html | sort -u); do
+           status=$(curl -s -o /dev/null -w "%{http_code}" "{{ portal_url }}/${bundle}")
+           echo "BUNDLE: ${bundle} STATUS: ${status}"
+           if [ "$status" != "200" ]; then
+             echo "FAIL: ${bundle} returned ${status}"
+           fi
+         done
+
+      4. Check that index.html itself returns 200:
+         index_status=$(curl -s -o /dev/null -w "%{http_code}" "{{ portal_url }}/")
+         echo "INDEX_STATUS: ${index_status}"
+
+      Pass criteria:
+        - index.html returns 200
+        - ALL referenced JS bundles return 200
+        - No 404 on any asset
+
+      Output exactly one of:
+        SMOKE_INDEX_PASS: true
+        SMOKE_INDEX_PASS: false REASON: <which bundle 404'd or index 404>
+
+  - id: smoke-portal-routes
+    name: Smoke test portal routes load without JS 404
+    agent: smoke-s3-checker
+    model: minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+    depends_on: [smoke-index-page]
+    condition: "SMOKE_INDEX_PASS: true"
+    timeout_minutes: 10
+    input: |
+      For each critical path in {{ portal_url }}, verify the page loads without JS 404 errors.
+
+      Critical paths:
+      - {{ portal_url }}/portal/performance
+      - {{ portal_url }}/portal/investor
+
+      For each path:
+      1. curl -s -o /tmp/smoke_page.html <path>
+      2. grep for any .js or .css references that return 404:
+         for asset in $(grep -oP '(?<=src="|href=")[^"]+\.(js|css)' /tmp/smoke_page.html | sort -u); do
+           # Convert relative paths to absolute if needed
+           if [[ "$asset" == /* ]]; then
+             full_url="{{ portal_url }}${asset}"
+           else
+             full_url="${asset}"
+           fi
+           status=$(curl -s -o /dev/null -w "%{http_code}" "$full_url")
+           if [ "$status" == "404" ]; then
+             echo "404_ASSET: ${full_url}"
+           fi
+         done
+
+      3. Check for any JavaScript runtime errors by looking at console.error patterns:
+         # Use a headless check if puppeteer is available, otherwise skip
+         which puppeteer 2>/dev/null || echo "PUPPETEER_NOT_AVAILABLE: skipping console error check"
+
+      Pass criteria:
+        - No 404 responses for any JS/CSS assets on /portal/performance
+        - No 404 responses for any JS/CSS assets on /portal/investor
+
+      Output exactly one of:
+        SMOKE_PORTAL_PASS: true
+        SMOKE_PORTAL_PASS: false FAILED_PATH: <path> 404_ASSETS: <list>
+
+  - id: report
+    name: Report smoke test results
+    agent: smoke-s3-reporter
+    model: minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+    depends_on: [smoke-index-page, smoke-portal-routes]
+    timeout_minutes: 3
+    input: |
+      Compile smoke test results and post a summary to Telegram.
+
+      Summary should include:
+      - Which tests passed/failed
+      - Any 404 assets found
+      - Time taken total
+      - Pass/fail verdict
+
+      Output format:
+        SMOKE_SUMMARY: PASS|FAIL
+        INDEX_PAGE: PASS|FAIL (reason if fail)
+        PORTAL_PERFORMANCE: PASS|FAIL (reason if fail)
+        PORTAL_INVESTOR: PASS|FAIL (reason if fail)
+        TOTAL_TIME: <seconds>s
+
+acceptance_criteria:
+  - cloudfront_invalidation_completed
+  - index_html_returns_200
+  - no_404_on_any_js_bundle
+  - no_404_on_portal_performance
+  - no_404_on_portal_investor
+  - report_posted_to_telegram

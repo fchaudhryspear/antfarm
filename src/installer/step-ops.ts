@@ -21,25 +21,46 @@ import { validateConsolidateInputs } from "../validate-consolidate-inputs.js";
 import { recordAgentRun, recordAgentRetry, getAgentStats } from "../agent-retry-stats.js";
 
 // ── Model Escalation on Retry ───────────────────────────────────────
-// When a step retries, escalate to the next more capable Ollama Cloud model.
-// Entirely within the existing Ollama Cloud roster — no Anthropic dependency.
-const MODEL_ESCALATION_TIERS = [
-  "minimax-m2.7",
-  "ollama-cloud/qwen3.5:397b-cloud",
-  "ollama-cloud/kimi-k2.5:cloud",
-  "ollama-cloud/devstral-2:123b-cloud",
-];
+// Two-tier escalation: Ollama Cloud → OpenAI Codex (April 6, 2026).
+// Tier 1 (Ollama Cloud): most models escalate to kimi-k2.5:cloud.
+// Tier 2 (OpenAI Codex): kimi-k2.5 escalates into Codex chain.
+// Codex chain: gpt-5.4-mini → gpt-5.1 → gpt-5.1-codex-max → gpt-5.2 → gpt-5.4.
+// Terminal (no further escalation): openai-codex/gpt-5.4, ollama-cloud/kimi-k2.5:cloud.
+const ESCALATION_MAP: Record<string, string[]> = {
+  // ── Tier 1: Ollama Cloud → kimi-k2.5 ────────────────────────────────
+  "ollama-cloud/qwen3.5:397b-cloud": ["ollama-cloud/kimi-k2.5:cloud"],
+  "ollama-cloud/deepseek-v3.2:cloud": ["ollama-cloud/kimi-k2.5:cloud"],
+  "ollama-cloud/nemotron-3-super:cloud": ["ollama-cloud/kimi-k2.5:cloud"],
+  "minimax-m2.7": ["ollama-cloud/kimi-k2.5:cloud"],
+  "ollama-cloud/devstral-2:123b-cloud": ["ollama-cloud/kimi-k2.5:cloud"],
+  "ollama-cloud/gemini-3-flash-preview:cloud": ["ollama-cloud/kimi-k2.5:cloud"],
+  "ollama-cloud/mistral-large-3:675b-cloud": ["ollama-cloud/kimi-k2.5:cloud"],
+  "ollama-cloud/qwen3-coder-next:cloud": ["ollama-cloud/kimi-k2.5:cloud"],
+  "ollama-cloud/glm-5:cloud": ["ollama-cloud/kimi-k2.5:cloud"],
+  // ── Tier 2: OpenAI Codex chain ─────────────────────────────────────
+  "ollama-cloud/kimi-k2.5:cloud": ["openai-codex/gpt-5.4-mini"],
+  "openai-codex/gpt-5.4-mini": ["openai-codex/gpt-5.1"],
+  "openai-codex/gpt-5.1": ["openai-codex/gpt-5.1-codex-max"],
+  "openai-codex/gpt-5.1-codex-max": ["openai-codex/gpt-5.2"],
+  "openai-codex/gpt-5.2": ["openai-codex/gpt-5.4"],
+  // Terminal — no further escalation
+  "openai-codex/gpt-5.4": [],
+};
 
 /**
- * Given the current model (or null), return the next tier up.
- * Returns null if already at the highest tier.
+ * Given the current escalated model (or null = still on primary), return the next tier.
+ * Uses the per-model ESCALATION_MAP. attemptNumber is 1-indexed (retry 1, 2, 3...).
+ * Returns null if no further escalation is available.
  */
-function getEscalatedModel(currentModel: string | null): string | null {
-  const current = currentModel ?? "default";
-  const idx = MODEL_ESCALATION_TIERS.indexOf(current);
-  if (idx === -1) return MODEL_ESCALATION_TIERS[MODEL_ESCALATION_TIERS.length - 1]; // unknown → max
-  if (idx >= MODEL_ESCALATION_TIERS.length - 1) return null; // already at top
-  return MODEL_ESCALATION_TIERS[idx + 1];
+function getEscalatedModel(currentModel: string | null, attemptNumber: number = 1): string | null {
+  if (!currentModel) {
+    // First escalation — default to gpt-5.4-mini (top of OpenAI Codex chain).
+    return "openai-codex/gpt-5.4-mini";
+  }
+  const chain = ESCALATION_MAP[currentModel] ?? [];
+  // attemptNumber 1 after first escalation = chain[0], etc.
+  // But we track the *current* model, so just take chain[0] (next step up)
+  return chain.length > 0 ? chain[0] : null;
 }
 
 /**
@@ -48,8 +69,23 @@ function getEscalatedModel(currentModel: string | null): string | null {
  */
 function escalateStepModel(stepId: string): string | null {
   const db = getDb();
-  const row = db.prepare("SELECT escalated_model FROM steps WHERE id = ?").get(stepId) as { escalated_model: string | null } | undefined;
-  const newModel = getEscalatedModel(row?.escalated_model ?? null);
+  const row = db.prepare("SELECT escalated_model, agent_id FROM steps WHERE id = ?").get(stepId) as { escalated_model: string | null; agent_id: string } | undefined;
+  if (!row) return null;
+
+  // If no prior escalation, look up the agent's configured primary model from the workflow
+  // so we escalate FROM the right starting point in the chain.
+  let currentModel = row.escalated_model;
+  if (!currentModel && row.agent_id) {
+    // Try to find the agent's primary model from cron config or workflow spec.
+    // The agent_id format is "swarm-code-review-v3_code-quality" — extract workflow + agent.
+    // For now, use a best-effort lookup from the steps' own context.
+    // The cron session's model is stored in the gateway; we can't easily query it here.
+    // Instead, use the ESCALATION_MAP keys to find the right chain:
+    // The first escalation from an unknown/null model goes to gpt-5.4-mini (safe default).
+    currentModel = null;
+  }
+
+  const newModel = getEscalatedModel(currentModel);
   if (newModel) {
     db.prepare("UPDATE steps SET escalated_model = ? WHERE id = ?").run(newModel, stepId);
   }
@@ -162,6 +198,96 @@ export function parseOutputKeyValues(output: string): Record<string, string> {
  * Fire-and-forget cron teardown when a run ends.
  * Looks up the workflow_id for the run and tears down crons if no other active runs.
  */
+// ── Fix #1 (RCA 322-325): Run-failure cascade ──────────────────────────────────────
+/**
+ * When a run fails, immediately cancel all still-running sibling steps
+ * so they stop burning CPU and holding sessions.
+ * This prevents zombie steps that outlive their run.
+ */
+export function cancelAllSiblingSteps(runId: string, excludeStepDbId?: string): void {
+  const db = getDb();
+  const running = db.prepare(
+    "SELECT id, step_id, agent_id FROM steps WHERE run_id = ? AND status = 'running'"
+  ).all(runId) as Array<{ id: string; step_id: string; agent_id: string }>;
+
+  for (const step of running) {
+    if (excludeStepDbId && step.id === excludeStepDbId) continue;
+    db.prepare(
+      "UPDATE steps SET status = 'cancelled', output = 'Run failed — sibling step terminated', updated_at = datetime('now') WHERE id = ?"
+    ).run(step.id);
+    const wfId = getWorkflowId(runId) ?? "";
+    emitEvent({
+      ts: new Date().toISOString(),
+      event: "step.cancelled",
+      runId,
+      workflowId: wfId,
+      stepId: step.step_id,
+      detail: "Cancelled: sibling step caused run failure",
+    });
+    // Also clear any heartbeat for this step's agent session
+    heartbeatClear(step.agent_id);
+  }
+}
+
+/**
+ * Fix #2: Cancel zombie steps — running steps in dead (failed/cancelled) runs.
+ * Independent of claimStep(). Called by the 2-min cleanup timer.
+ */
+function cancelZombieSteps(): void {
+  const db = getDb();
+  const zombies = db.prepare(
+    `SELECT s.id, s.step_id, s.run_id, s.agent_id FROM steps s
+     JOIN runs r ON r.id = s.run_id
+     WHERE s.status = 'running' AND r.status IN ('failed', 'cancelled')`
+  ).all() as Array<{ id: string; step_id: string; run_id: string; agent_id: string }>;
+
+  for (const step of zombies) {
+    db.prepare(
+      "UPDATE steps SET status = 'cancelled', output = 'Zombie step cancelled: run already dead', updated_at = datetime('now') WHERE id = ?"
+    ).run(step.id);
+    const wfId = getWorkflowId(step.run_id) ?? "";
+    emitEvent({
+      ts: new Date().toISOString(),
+      event: "step.cancelled",
+      runId: step.run_id,
+      workflowId: wfId,
+      stepId: step.step_id,
+      detail: "Zombie cancelled: run was already failed/cancelled",
+    });
+    heartbeatClear(step.agent_id);
+    logger.info(`Zombie step cancelled: ${step.step_id} in dead run ${step.run_id.slice(0, 8)}`);
+  }
+}
+
+/**
+ * Fix #2 (RCA 322-325): Independent cleanup timer.
+ * Fires every 2 minutes regardless of claimStep() activity.
+ * Guards against zombie steps in dead runs that no agent will ever claim.
+ */
+let cleanupIntervalHandle: ReturnType<typeof setInterval> | null = null;
+
+export function startIndependentCleanupTimer(intervalMs = 2 * 60 * 1000): void {
+  if (cleanupIntervalHandle) {
+    clearInterval(cleanupIntervalHandle);
+  }
+  cleanupIntervalHandle = setInterval(() => {
+    try {
+      cleanupAbandonedSteps();
+      cancelZombieSteps();
+    } catch (err) {
+      logger.error(`Independent cleanup timer error: ${err}`, { runId: undefined, stepId: undefined, workflowId: undefined });
+    }
+  }, intervalMs);
+  logger.info(`Independent cleanup timer started (interval: ${intervalMs / 1000}s)`);
+}
+
+export function stopIndependentCleanupTimer(): void {
+  if (cleanupIntervalHandle) {
+    clearInterval(cleanupIntervalHandle);
+    cleanupIntervalHandle = null;
+  }
+}
+
 function scheduleRunCronTeardown(runId: string): void {
   try {
     const db = getDb();
@@ -450,6 +576,7 @@ export function cleanupAbandonedSteps(): void {
           emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, storyId: story.story_id, storyTitle: story.title, detail: "Abandoned — retries exhausted" });
           emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: "Story abandoned and retries exhausted" });
           emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "Story abandoned and retries exhausted" });
+          cancelAllSiblingSteps(step.run_id, step.id); // Fix #1
           scheduleRunCronTeardown(step.run_id);
         } else {
           db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(newRetry, story.id);
@@ -480,6 +607,7 @@ export function cleanupAbandonedSteps(): void {
       emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Retries exhausted — step timed out after ${actualDurationMin}min (limit: ${configuredTimeoutMin}min)` });
       emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: "Agent abandoned step without completing" });
       emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "Step abandoned and retries exhausted" });
+      cancelAllSiblingSteps(step.run_id, step.id); // Fix #1
       scheduleRunCronTeardown(step.run_id);
     } else {
       // Reset to pending for retry — do NOT increment retry_count (abandonment != explicit failure)
@@ -584,6 +712,7 @@ function failStepWithMissingInputs(
     workflowId: wfId,
     detail: message,
   });
+  cancelAllSiblingSteps(runId); // Fix #1
   scheduleRunCronTeardown(runId);
 }
 
@@ -706,26 +835,23 @@ export function claimStep(agentId: string): ClaimResult {
   //
   // Two queries: first try parallel-aware (no step_index gate), then fall back to sequential.
   const step = (
-    // Parallel path: find pending steps for this agent where the run has parallel steps
+    // Parallel path: pending steps with no dependencies are immediately claimable
+    // (no step_index gate — this is the fast dispatch lane for parallel agents)
     db.prepare(
       `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.step_index, s.escalated_model
        FROM steps s
        JOIN runs r ON r.id = s.run_id
-       WHERE s.agent_id = ? AND s.status = 'pending'
+       WHERE s.agent_id = ? AND s.status = 'pending' AND s.depends_on IS NULL
          AND r.status NOT IN ('failed', 'cancelled')
-         AND EXISTS (
-           SELECT 1 FROM steps p
-           WHERE p.run_id = s.run_id AND p.depends_on IS NOT NULL
-         )
-      ORDER BY s.step_index ASC, s.step_id ASC
+       ORDER BY s.step_index ASC, s.step_id ASC
        LIMIT 1`
     ).get(agentId) ??
-    // Sequential fallback: no parallel steps in run, enforce step_index ordering
+    // Sequential path: pending steps with dependencies must wait for deps to clear
     db.prepare(
       `SELECT s.id, s.step_id, s.run_id, s.input_template, s.type, s.loop_config, s.step_index, s.escalated_model
        FROM steps s
        JOIN runs r ON r.id = s.run_id
-       WHERE s.agent_id = ? AND s.status = 'pending'
+       WHERE s.agent_id = ? AND s.status = 'pending' AND s.depends_on IS NOT NULL
          AND r.status NOT IN ('failed', 'cancelled')
          AND NOT EXISTS (
            SELECT 1 FROM steps prev
@@ -733,7 +859,7 @@ export function claimStep(agentId: string): ClaimResult {
              AND prev.step_index < s.step_index
              AND prev.status NOT IN ('done', 'skipped')
          )
-      ORDER BY s.step_index ASC, s.step_id ASC
+       ORDER BY s.step_index ASC, s.step_id ASC
        LIMIT 1`
     ).get(agentId)
   ) as {
@@ -802,6 +928,7 @@ export function claimStep(agentId: string): ClaimResult {
           const wfId = getWorkflowId(step.run_id);
           emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.id, agentId: agentId, detail: "Loop has failed stories and no pending stories" });
           emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "Loop has failed stories and no pending stories" });
+          cancelAllSiblingSteps(step.run_id, step.id); // Fix #1
           scheduleRunCronTeardown(step.run_id);
           return { found: false };
         }
@@ -939,12 +1066,20 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
 
   if (!step) throw new Error(`Step not found: ${stepId}`);
 
-  // Heartbeat: clear session on completion (Issue #339)
+  // Heartbeat: clear AFTER successful completion only (not on schema failure)
+  // Moved from here to post-validation path so fast-failing agents stay tracked
   const agentForHeartbeat = db.prepare("SELECT agent_id FROM steps WHERE id = ?").get(stepId) as { agent_id: string } | undefined;
-  if (agentForHeartbeat) heartbeatClear(agentForHeartbeat.agent_id);
 
   // SCORE: / PR_URL: validation — reject non-consolidate steps that don't contain a valid completion marker
   const isConsolidate = step.step_id === "consolidate";
+  // Fix #5: Reject empty output at the source — empty heredoc piping from RC1
+  if (!isConsolidate && (!output || output.trim() === '')) {
+    logger.warn(`Step ${step.step_id} submitted empty output — rejecting and resetting to pending`, { runId: step.run_id, stepId: step.step_id });
+    db.prepare(
+      "UPDATE steps SET status = 'pending', output = NULL, updated_at = datetime('now') WHERE id = ?"
+    ).run(stepId);
+    return { advanced: false, runCompleted: false };
+  }
   const hasValidMarker = output && (output.includes("SCORE:") || output.includes("PR_URL:"));
   if (!isConsolidate && output && !hasValidMarker) {
     logger.warn(`Step ${step.step_id} output missing valid completion marker (SCORE: or PR_URL:) — rejecting and resetting to pending`, { runId: step.run_id, stepId: step.step_id });
@@ -969,6 +1104,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
         db.prepare("UPDATE steps SET status = 'failed', output = ?, retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(`Schema validation failed: ${schemaResult.reason}`, newRetry, stepId);
         db.prepare("UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?").run(step.run_id);
         emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), detail: `Output schema retries exhausted for ${step.step_id}` });
+        cancelAllSiblingSteps(step.run_id, stepId); // Fix #1
         scheduleRunCronTeardown(step.run_id);
         return { advanced: false, runCompleted: false };
       }
@@ -990,6 +1126,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       db.prepare("UPDATE steps SET status = 'failed', output = ?, updated_at = datetime('now') WHERE id = ?").run(failOutput, stepId);
       db.prepare("UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?").run(step.run_id);
       emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), detail: "Consolidate-PR blocked: critical domain outputs missing" });
+      cancelAllSiblingSteps(step.run_id, stepId); // Fix #1
       scheduleRunCronTeardown(step.run_id);
       return { advanced: false, runCompleted: false };
     }
@@ -1101,6 +1238,8 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   db.prepare(
     "UPDATE steps SET status = 'done', output = ?, updated_at = datetime('now') WHERE id = ?"
   ).run(output, stepId);
+  // Heartbeat: clear session only on successful completion (Issue #339 fix)
+  if (agentForHeartbeat) heartbeatClear(agentForHeartbeat.agent_id);
   emitEvent({ ts: new Date().toISOString(), event: "step.done", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id });
   logger.info(`Step completed: ${step.step_id}`, { runId: step.run_id, stepId: step.step_id });
   // Issue #343: Record successful run for agent stats
@@ -1155,6 +1294,7 @@ function handleVerifyEachCompletion(
         const wfId = getWorkflowId(verifyStep.run_id);
         emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: verifyStep.run_id, workflowId: wfId, stepId: verifyStep.step_id });
         emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: verifyStep.run_id, workflowId: wfId, detail: "Verification retries exhausted" });
+        cancelAllSiblingSteps(verifyStep.run_id, loopStepId); // Fix #1
         scheduleRunCronTeardown(verifyStep.run_id);
         return { advanced: false, runCompleted: false };
       }
@@ -1227,6 +1367,7 @@ function checkLoopContinuation(runId: string, loopStepId: string): { advanced: b
     const wfId = getWorkflowId(runId);
     emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId, workflowId: wfId, stepId: loopStepId, detail: "Loop has failed stories and no pending stories" });
     emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId, workflowId: wfId, detail: "Loop has failed stories and no pending stories" });
+    cancelAllSiblingSteps(runId, loopStepId); // Fix #1
     scheduleRunCronTeardown(runId);
     return { advanced: false, runCompleted: false };
   }
@@ -1329,7 +1470,7 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
 // After advancePipeline dispatches steps to 'pending', immediately claim
 // and spawn sessions for each unblocked agent instead of waiting for cron.
 
-function triggerImmediateStepEnqueue(dispatchedAgentIds: string[], runId: string): void {
+export function triggerImmediateStepEnqueue(dispatchedAgentIds: string[], runId: string): void {
   // Deduplicate agent IDs (multiple steps may share an agent)
   const uniqueAgents = [...new Set(dispatchedAgentIds)];
   const wfId = getWorkflowId(runId);
@@ -1483,6 +1624,7 @@ export async function failStep(stepId: string, error: string): Promise<{ retryin
         emitEvent({ ts: new Date().toISOString(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: error });
         emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: stepId, detail: error });
         emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "Story retries exhausted" });
+        cancelAllSiblingSteps(step.run_id, stepId); // Fix #1
         scheduleRunCronTeardown(step.run_id);
         await notifyFailureExhausted(step.run_id, step.step_id, error);
         return { retrying: false, runFailed: true };
@@ -1515,6 +1657,7 @@ export async function failStep(stepId: string, error: string): Promise<{ retryin
     const wfId2 = getWorkflowId(step.run_id);
     emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId2, stepId: stepId, detail: error });
     emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: wfId2, detail: "Step retries exhausted" });
+    cancelAllSiblingSteps(step.run_id, stepId); // Fix #1
     scheduleRunCronTeardown(step.run_id);
     await notifyFailureExhausted(step.run_id, step.step_id, error);
     return { retrying: false, runFailed: true };

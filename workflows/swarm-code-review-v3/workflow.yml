@@ -1,10 +1,11 @@
 id: swarm-code-review-v3
 name: 10-Agent Parallel Swarm Code Review v3.3
-version: 3.4
+version: 3.5
 workflow_objective: Comprehensive parallel codebase review using 10 specialized agents
   with structured output and parameterized scope.
 description: 'Parallel variant of the swarm code review. All 10 review agents launch simultaneously.
   Only the consolidate step waits for all 10 via depends_on (v3.4).
+  v3.5: Model reliability swap — minimax-m2.7 (4 agents) + kimi-k2.5 (frontend) → qwen3.5:397b-cloud based on Run #321 retry data.
   v3.4: Upgraded security-auditor, backend-architect, testing-strategist to kimi-k2.5 for deeper analysis.
   v3.3 fixes: project-agnostic context, comprehensive exclude patterns in all agents (Bug #22).
   v3.2 fixes: explicit filesystem nav, anti-drift clauses, absolute repo path, output size guardrails.'
@@ -39,7 +40,7 @@ agents:
     baseDir: agents/code-quality
     files:
       AGENTS.md: agents/code-quality/AGENTS.md
-  model: ollama-cloud/minimax-m2.7:cloud
+  model: ollama-cloud/qwen3.5:397b-cloud
   delivery:
     channel: telegram
 - id: security-auditor
@@ -59,7 +60,7 @@ agents:
     baseDir: agents/performance-engineer
     files:
       AGENTS.md: agents/performance-engineer/AGENTS.md
-  model: ollama-cloud/minimax-m2.7:cloud
+  model: ollama-cloud/qwen3.5:397b-cloud
   delivery:
     channel: telegram
 - id: ux-specialist
@@ -79,7 +80,7 @@ agents:
     baseDir: agents/backend-architect
     files:
       AGENTS.md: agents/backend-architect/AGENTS.md
-  model: ollama-cloud/minimax-m2.7:cloud
+  model: ollama-cloud/qwen3.5:397b-cloud
   delivery:
     channel: telegram
 - id: frontend-architect
@@ -89,7 +90,7 @@ agents:
     baseDir: agents/frontend-architect
     files:
       AGENTS.md: agents/frontend-architect/AGENTS.md
-  model: ollama-cloud/kimi-k2.5:cloud
+  model: ollama-cloud/qwen3.5:397b-cloud
   delivery:
     channel: telegram
 - id: devops-engineer
@@ -99,7 +100,7 @@ agents:
     baseDir: agents/devops-engineer
     files:
       AGENTS.md: agents/devops-engineer/AGENTS.md
-  model: ollama-cloud/minimax-m2.7:cloud
+  model: ollama-cloud/qwen3.5:397b-cloud
   delivery:
     channel: telegram
 - id: documentation-specialist
@@ -145,56 +146,56 @@ agents:
 steps:
 - id: code-quality-review
   agent: code-quality
-  timeout_minutes: 25
+  timeout_minutes: 50
   expects: 'SCORE:'
   timeoutSeconds: 3600
   input: "TASK: {{ task }}\nREPO_PATH: {{ repo_path }}\nREPO_NAME: {{ repo_name }}\nSCOPE: {{ scope }}\nFOCUS_AREAS: {{ focus_areas }}\nEXCLUDE: {{ exclude_patterns }}\n\nCRITICAL INSTRUCTIONS:\n{{ review_directive }}\n\nSTEP 1: cd into {{ repo_path }} and run: find . -name \"*.ts\" -o -name \"*.tsx\" -o -name \"*.py\" -o -name \"*.js\" | grep -v -E '{{ exclude_patterns }}' | head -50\nSTEP 2: Read and analyze the actual source code files found in Step 1.\nSTEP 3: Produce your findings based ONLY on code you actually read.\n\nIf you cannot find source code at REPO_PATH, report that as your only finding — do NOT fabricate a review.\nDo NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.\n\nReview code quality within the scope above. Limit to 7 findings max.\n"
   max_retries: 3
 - id: security-audit
   agent: security-auditor
-  timeout_minutes: 25
+  timeout_minutes: 50
   expects: 'SCORE:'
   timeoutSeconds: 3600
   input: "TASK: {{ task }}\nREPO_PATH: {{ repo_path }}\nREPO_NAME: {{ repo_name }}\nSCOPE: {{ scope }}\nFOCUS_AREAS: {{ focus_areas }}\nEXCLUDE: {{ exclude_patterns }}\n\nCRITICAL INSTRUCTIONS:\n{{ review_directive }}\n\nSTEP 1: cd into {{ repo_path }} and run: find . -name \"*.ts\" -o -name \"*.tsx\" -o -name \"*.py\" -o -name \"*.js\" -o -name \"*.yml\" -o -name \"*.yaml\" -o -name \"*.json\" | grep -v -E '{{ exclude_patterns }}' | head -50\nSTEP 2: Read and analyze the actual source code for security vulnerabilities.\nSTEP 3: Produce your findings based ONLY on code you actually read.\n\nIf you cannot find source code at REPO_PATH, report that as your only finding — do NOT fabricate a review.\nDo NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.\n\nAudit security within the scope above. Limit to 7 findings max.\n"
   max_retries: 3
 - id: performance-review
   agent: performance-engineer
-  timeout_minutes: 25
+  timeout_minutes: 50
   expects: 'SCORE:'
   timeoutSeconds: 5400
   input: "TASK: {{ task }}\nREPO_PATH: {{ repo_path }}\nREPO_NAME: {{ repo_name }}\nSCOPE: {{ scope }}\nFOCUS_AREAS: {{ focus_areas }}\nEXCLUDE: {{ exclude_patterns }}\n\nCRITICAL INSTRUCTIONS:\n{{ review_directive }}\n\nSTEP 1: cd into {{ repo_path }} and run: find . -name \"*.ts\" -o -name \"*.tsx\" -o -name \"*.py\" -o -name \"*.js\" | grep -v -E '{{ exclude_patterns }}' | head -50\nSTEP 2: Read and analyze the actual source code for performance issues (N+1 queries, unbounded loops, missing caching, large bundle sizes, unoptimized DB queries).\nSTEP 3: Produce your findings based ONLY on code you actually read.\n\nIf you cannot find source code at REPO_PATH, report that as your only finding — do NOT fabricate a review.\nDo NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.\n\nReview performance within the scope above. Limit to 7 findings max.\n"
   max_retries: 3
 - id: ux-review
   agent: ux-specialist
-  timeout_minutes: 25
+  timeout_minutes: 50
   expects: 'SCORE:'
   timeoutSeconds: 5400
   input: "TASK: {{ task }}\nREPO_PATH: {{ repo_path }}\nREPO_NAME: {{ repo_name }}\nURL: {{ url | default: \"\" }}\nSCOPE: {{ scope }}\nFOCUS_AREAS: {{ focus_areas }}\nEXCLUDE: {{ exclude_patterns }}\n\nCRITICAL INSTRUCTIONS:\n{{ review_directive }}\n\nSTEP 1: cd into {{ repo_path }} and run: find . -path \"*/src/components/*\" -o -path \"*/src/pages/*\" -o -path \"*/src/views/*\" -o -name \"*.tsx\" -o -name \"*.jsx\" | grep -v -E '{{ exclude_patterns }}' | head -50\nSTEP 2: Read and analyze the actual UI components for UX issues (accessibility, form validation, error states, loading states, responsive design).\nSTEP 3: Produce your findings based ONLY on code you actually read.\n\nIf you cannot find source code at REPO_PATH, report that as your only finding — do NOT fabricate a review.\nDo NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.\n\nReview UX within the scope above. Limit to 7 findings max.\n"
   max_retries: 3
 - id: backend-review
   agent: backend-architect
-  timeout_minutes: 25
+  timeout_minutes: 50
   expects: 'SCORE:'
   timeoutSeconds: 5400
   input: "TASK: {{ task }}\nREPO_PATH: {{ repo_path }}\nREPO_NAME: {{ repo_name }}\nSCOPE: {{ scope }}\nFOCUS_AREAS: {{ focus_areas }}\nEXCLUDE: {{ exclude_patterns }}\n\nCRITICAL INSTRUCTIONS:\n{{ review_directive }}\n\nSTEP 1: cd into {{ repo_path }} and run: find . -path \"*/backend/*\" -o -path \"*/lambdas/*\" -o -path \"*/services/*\" -o -path \"*/migrations/*\" -o -name \"*.py\" | grep -v -E '{{ exclude_patterns }}' | head -50\nSTEP 2: Read and analyze the actual backend code for architecture issues (API design, error handling, DB schema, Lambda structure, service boundaries).\nSTEP 3: Produce your findings based ONLY on code you actually read.\n\nIf you cannot find source code at REPO_PATH, report that as your only finding — do NOT fabricate a review.\nDo NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.\n\nReview backend architecture within the scope above. Limit to 7 findings max.\n"
   max_retries: 3
 - id: frontend-review
   agent: frontend-architect
-  timeout_minutes: 25
+  timeout_minutes: 50
   expects: 'SCORE:'
   timeoutSeconds: 3600
   input: "TASK: {{ task }}\nREPO_PATH: {{ repo_path }}\nREPO_NAME: {{ repo_name }}\nURL: {{ url | default: \"\" }}\nSCOPE: {{ scope }}\nFOCUS_AREAS: {{ focus_areas }}\nEXCLUDE: {{ exclude_patterns }}\n\nCRITICAL INSTRUCTIONS:\n{{ review_directive }}\n\nSTEP 1: cd into {{ repo_path }} and run: find . -path \"*/src/*\" -name \"*.tsx\" -o -name \"*.ts\" -o -name \"*.jsx\" | grep -v -E '{{ exclude_patterns }}' | head -50\nSTEP 2: Read and analyze the actual frontend code (component architecture, state management, routing, build config, dependency management).\nSTEP 3: Produce your findings based ONLY on code you actually read.\n\nIf you cannot find source code at REPO_PATH, report that as your only finding — do NOT fabricate a review.\nDo NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.\n\nReview frontend architecture within the scope above. Limit to 7 findings max.\n"
   max_retries: 3
 - id: devops-review
   agent: devops-engineer
-  timeout_minutes: 25
+  timeout_minutes: 50
   expects: 'SCORE:'
   timeoutSeconds: 3600
   input: "TASK: {{ task }}\nREPO_PATH: {{ repo_path }}\nREPO_NAME: {{ repo_name }}\nSCOPE: {{ scope }}\nFOCUS_AREAS: {{ focus_areas }}\nEXCLUDE: {{ exclude_patterns }}\n\nCRITICAL INSTRUCTIONS:\n{{ review_directive }}\n\nSTEP 1: cd into {{ repo_path }} and run: find . -name \"*.yml\" -o -name \"*.yaml\" -o -name \"template.yaml\" -o -name \"Dockerfile\" -o -name \"*.tf\" -o -name \"*.toml\" | grep -v -E '{{ exclude_patterns }}' | head -50\nSTEP 2: Read and analyze the actual infrastructure code (CI/CD, IaC, deployment config, monitoring, security groups).\nSTEP 3: Produce your findings based ONLY on files you actually read.\n\nIf you cannot find infrastructure files at REPO_PATH, report that as your only finding — do NOT fabricate a review.\nDo NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.\n\nReview DevOps within the scope above. Limit to 7 findings max.\n"
   max_retries: 3
 - id: docs-review
   agent: documentation-specialist
-  timeout_minutes: 25
+  timeout_minutes: 50
   expects: 'SCORE:'
   timeoutSeconds: 1800
   input: "TASK: {{ task }}\nREPO_PATH: {{ repo_path }}\nREPO_NAME: {{ repo_name }}\nSCOPE: {{ scope }}\nFOCUS_AREAS: {{ focus_areas }}\nEXCLUDE: {{ exclude_patterns }}\n\nCRITICAL INSTRUCTIONS:\n{{ review_directive }}\n\nSTEP 1: cd into {{ repo_path }} and run: find . -name \"*.md\" -o -name \"*.rst\" -o -name \"README*\" -o -name \"CHANGELOG*\" -o -name \"CONTRIBUTING*\" | grep -v -E '{{ exclude_patterns }}' | head -30\nSTEP 2: Also run: find . -name \"*.ts\" -o -name \"*.py\" | grep -v -E '{{ exclude_patterns }}' | head -20 and check for inline code documentation quality.\nSTEP 3: Produce your findings based ONLY on files you actually read (or confirmed missing).\n\nIf documentation is missing, that IS a valid finding — report missing docs.\nDo NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.\n\nReview documentation within the scope above. Limit to 7 findings max.\n"
@@ -208,15 +209,26 @@ steps:
   max_retries: 3
 - id: product-review
   agent: product-strategist
-  timeout_minutes: 25
+  timeout_minutes: 50
   expects: 'SCORE:'
   timeoutSeconds: 3600
   input: "TASK: {{ task }}\nREPO_PATH: {{ repo_path }}\nREPO_NAME: {{ repo_name }}\nSCOPE: {{ scope }}\nFOCUS_AREAS: {{ focus_areas }}\nEXCLUDE: {{ exclude_patterns }}\n\nCRITICAL INSTRUCTIONS:\n{{ review_directive }}\n\nSTEP 1: cd into {{ repo_path }} and run: find . -path \"*/src/pages/*\" -o -path \"*/src/components/*\" -o -path \"*/routes*\" -o -name \"App.tsx\" | grep -v -E '{{ exclude_patterns }}' | head -30\nSTEP 2: Read route definitions, page components, and feature modules to understand the product surface.\nSTEP 3: Produce your findings based ONLY on code you actually read.\n\nIf you cannot find source code at REPO_PATH, report that as your only finding — do NOT fabricate a review.\nDo NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.\n\nIMPORTANT: Keep your output under 3000 characters total. Be concise.\n\nReview product strategy within the scope above. Limit to 7 findings max.\n"
   max_retries: 3
 - id: consolidate
   agent: consolidate
-  timeout_minutes: 25
+  timeout_minutes: 50
   expects: 'OVERALL_SCORE:'
   timeoutSeconds: 3600
+  depends_on:
+    - code-quality-review
+    - security-audit
+    - performance-review
+    - ux-review
+    - backend-review
+    - frontend-review
+    - devops-review
+    - docs-review
+    - testing-review
+    - product-review
   input: "TASK: Consolidate all 10 review reports into a unified code review summary.\n\nParse each agent's output, rank issues by severity across all domains, and produce a prioritized action plan.\n\nFor any agent that reported 0/100 or N/A with no real findings, mark it as \"INCOMPLETE — agent did not review source code\" in the summary.\n\nREVIEW OUTPUTS:\nCode Quality: {{ steps.code-quality-review.summary }}\nSecurity: {{ steps.security-audit.summary }}\nPerformance: {{ steps.performance-review.summary }}\nUX: {{ steps.ux-review.summary }}\nBackend: {{ steps.backend-review.summary }}\nFrontend: {{ steps.frontend-review.summary }}\nDevOps: {{ steps.devops-review.summary }}\nDocs: {{ steps.docs-review.summary }}\nTesting: {{ steps.testing-review.summary }}\nProduct: {{ steps.product-review.summary }}\n"
   max_retries: 2

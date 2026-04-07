@@ -5,6 +5,7 @@ import { getDb, nextRunNumber } from "../db.js";
 import { logger } from "../lib/logger.js";
 import { ensureWorkflowCrons } from "./agent-cron.js";
 import { emitEvent } from "./events.js";
+import { triggerImmediateStepEnqueue } from "./step-ops.js";
 
 function validateDependencyGraph(steps: Array<{ id: string; depends_on?: string | string[] }>): void {
   const stepIds = new Set(steps.map(s => s.id));
@@ -73,6 +74,19 @@ export async function runWorkflow(params: {
     ...params.context, // Bug #25 fix: merge --context KEY=value pairs into initialContext
   };
 
+  // RC4: Preflight validation — reject dispatch when required context vars are empty
+  const requiredVars = ["repo_path", "repo_name"];
+  const emptyRequired = requiredVars.filter(v => {
+    const val = initialContext[v];
+    return val === undefined || val === null || val.trim() === "";
+  });
+  if (emptyRequired.length > 0) {
+    throw new Error(
+      `Required context variable(s) empty: ${emptyRequired.join(", ")}. ` +
+      `Pass --repo-path=/path/to/repo and --context repo_name=my-project at dispatch time.`
+    );
+  }
+
   db.exec("BEGIN");
   try {
     const notifyUrl = params.notifyUrl ?? workflow.notifications?.url ?? null;
@@ -131,6 +145,16 @@ export async function runWorkflow(params: {
   } catch (err) {
     db.exec("ROLLBACK");
     throw err;
+  }
+
+  // Issue #336 fix: immediately dispatch all parallel pending steps without waiting for cron
+  const pendingSteps = db.prepare(
+    "SELECT agent_id FROM steps WHERE run_id = ? AND status = 'pending'"
+  ).all(runId) as Array<{ agent_id: string }>;
+  if (pendingSteps.length > 0) {
+    const pendingAgentIds = pendingSteps.map(s => s.agent_id);
+    logger.info(`Event-driven dispatch: firing ${pendingSteps.length} parallel steps immediately`);
+    triggerImmediateStepEnqueue(pendingAgentIds, runId);
   }
 
   // Start crons for this workflow (no-op if already running from another run)

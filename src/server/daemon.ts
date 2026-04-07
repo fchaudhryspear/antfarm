@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { startDashboard } from "./dashboard.js";
+import { startIndependentCleanupTimer } from "../installer/step-ops.js";
 
 const port = parseInt(process.argv[2], 10) || 3333;
 
@@ -18,3 +19,4 @@ process.on("SIGTERM", () => {
 });
 
 startDashboard(port);
+startIndependentCleanupTimer();

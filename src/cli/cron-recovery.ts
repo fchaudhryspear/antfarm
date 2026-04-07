@@ -72,24 +72,34 @@ export async function recoverCrons(dryRun = false): Promise<{
     try {
       const workflowDir = resolveWorkflowDir(workflowId);
       const workflow = await loadWorkflowSpec(workflowDir);
-      
-      // Check if crons already exist via gateway API
+      const expectedCount = workflow.agents?.length || 0;
+
+      // Check existing crons for logging context only — always call ensureWorkflowCrons
+      // because it's idempotent and handles partial cron sets (e.g. 3 of 5 agents survived restart)
       const cronResult = await listCronJobs();
       const existingCrons = cronResult.jobs || [];
       const workflowCrons = existingCrons.filter((c: { name: string }) => c.name?.startsWith(`antfarm/${workflowId}/`));
-      
-      if (workflowCrons.length > 0) {
-        console.log(`   ⏭️  ${workflowId}: ${workflowCrons.length} cron(s) already present`);
-        result.alreadyPresent++;
+
+      if (workflowCrons.length === expectedCount) {
+        console.log(`   ⏭️  ${workflowId}: all ${expectedCount} cron(s) already present, reconciling...`);
       } else {
-        console.log(`   📝 ${workflowId}: registering ${workflow.agents?.length || 0} agent cron(s)...`);
-        await ensureWorkflowCrons(workflow);
-        
-        // Verify registration
-        const afterResult = await listCronJobs();
-        const afterCrons = afterResult.jobs || [];
-        const afterWorkflowCrons = afterCrons.filter((c: { name: string }) => c.name?.startsWith(`antfarm/${workflowId}/`));
-        console.log(`   ✅ ${workflowId}: ${afterWorkflowCrons.length} cron(s) registered`);
+        console.log(`   📝 ${workflowId}: ${workflowCrons.length}/${expectedCount} cron(s) present, reconciling...`);
+      }
+
+      // Always reconcile — ensureWorkflowCrons is idempotent and will create missing,
+      // update drifted, and remove orphaned crons
+      await ensureWorkflowCrons(workflow);
+
+      // Verify registration
+      const afterResult = await listCronJobs();
+      const afterCrons = afterResult.jobs || [];
+      const afterWorkflowCrons = afterCrons.filter((c: { name: string }) => c.name?.startsWith(`antfarm/${workflowId}/`));
+
+      if (afterWorkflowCrons.length === expectedCount) {
+        console.log(`   ✅ ${workflowId}: ${afterWorkflowCrons.length}/${expectedCount} cron(s) verified`);
+        result.registered++;
+      } else {
+        console.log(`   ⚠️  ${workflowId}: ${afterWorkflowCrons.length}/${expectedCount} cron(s) after reconciliation`);
         result.registered++;
       }
     } catch (err) {

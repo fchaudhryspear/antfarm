@@ -2,22 +2,28 @@
 // Validates step output against required fields per agent role.
 // Extracted from step-ops.ts for standalone use and testability.
 
-import type { AgentRole } from "./installer/types.js";
-import { inferRole } from "./installer/install.js";
+/**
+ * Agent schema based on workflow prefix.
+ * The full agent ID carries the workflow signal (review vs fix) — preserve it.
+ * Fallback to 'review' is safer (less likely to false-reject).
+ */
+export function getAgentSchema(agentId: string): "review" | "fix" | "consolidate" {
+  if (agentId.includes("consolidate")) return "consolidate";
+  if (agentId.includes("swarm-code-review")) return "review";
+  if (agentId.includes("swarm-code-fix")) return "fix";
+  return "review"; // safe default
+}
 
 /**
- * Required output fields per agent role.
- * Review agents: STATUS + SCORE + FINDINGS
- * Fix/coding agents: STATUS + CHANGES + FILES_MODIFIED
- * PR agents: STATUS + PR_URL
+ * Required output fields per schema.
+ * review:  STATUS + SCORE + FINDINGS  (review / analysis agents)
+ * fix:    STATUS + CHANGES + FILES_MODIFIED  (coding / fixer agents)
+ * consolidate: STATUS + PR_URL  (PR/submission agents)
  */
-const ROLE_REQUIRED_FIELDS: Record<AgentRole, string[]> = {
-  analysis:     ["STATUS", "SCORE", "FINDINGS"],
-  coding:       ["STATUS", "CHANGES", "FILES_MODIFIED"],
-  verification: ["STATUS", "SCORE", "FINDINGS"],
-  testing:      ["STATUS", "SCORE", "FINDINGS"],
-  pr:           ["STATUS", "PR_URL"],
-  scanning:     ["STATUS", "SCORE", "FINDINGS"],
+const SCHEMA_REQUIRED_FIELDS: Record<string, string[]> = {
+  review:      ["STATUS", "SCORE", "FINDINGS"],
+  fix:         ["STATUS", "CHANGES", "FILES_MODIFIED"],
+  consolidate: ["STATUS", "PR_URL"],
 };
 
 export type ValidationResult =
@@ -25,51 +31,74 @@ export type ValidationResult =
   | { valid: false; missingFields: string[]; reason: string };
 
 /**
- * Validate step output against the required schema for the agent's role.
+ * Validate step output against the required schema for the agent's workflow.
  * Returns { valid: true } or { valid: false, missingFields: [...], reason: "..." }.
  *
  * @param output - The raw output string from the agent
- * @param agentType - The agent ID (e.g. "swarm-code-fix-v1_fix-security")
+ * @param agentId - The full agent ID (e.g. "swarm-code-review-v3_code-quality")
  */
 export function validateStepOutput(
   output: string,
-  agentType: string,
+  agentId: string,
 ): ValidationResult {
   if (!output || output.trim().length === 0) {
     return { valid: false, missingFields: ["*"], reason: "Output is empty" };
   }
 
-  // Derive role from agent ID (strip workflow prefix)
-  const underscoreIdx = agentType.indexOf("_");
-  const localId = underscoreIdx > 0 ? agentType.slice(underscoreIdx + 1) : agentType;
-  const role = inferRole(localId);
-  const requiredFields = ROLE_REQUIRED_FIELDS[role];
-  if (!requiredFields || requiredFields.length === 0) return { valid: true };
+  const schema = getAgentSchema(agentId);
+  const requiredFields = SCHEMA_REQUIRED_FIELDS[schema] ?? [];
+  if (requiredFields.length === 0) return { valid: true };
 
   const presentKeys = new Set(parseOutputKeys(output));
 
   const missingFields = requiredFields.filter((field) => !presentKeys.has(field));
+
+  // For review schema: STATUS is optional when SCORE is present.
+  // The score IS the completion signal — agents reliably produce SCORE but often skip STATUS.
+  if (schema === "review" && missingFields.length === 1 && missingFields[0] === "STATUS" && presentKeys.has("SCORE")) {
+    return { valid: true };
+  }
+  // For fix schema: STATUS is optional when CHANGES is present.
+  if (schema === "fix" && missingFields.length === 1 && missingFields[0] === "STATUS" && presentKeys.has("CHANGES")) {
+    return { valid: true };
+  }
+
   if (missingFields.length > 0) {
     return {
       valid: false,
       missingFields,
-      reason: `Missing required fields for role "${role}": ${missingFields.join(", ")}`,
+      reason: `Missing required fields for schema "${schema}": ${missingFields.join(", ")}`,
     };
   }
   return { valid: true };
 }
 
+// ── Fix #4 (RCA 322-325): Case-insensitive key parsing + markdown strip ──────────
+/**
+ * Strip markdown code fences and normalize whitespace before key extraction.
+ * Handles agent outputs wrapped in ```...``` or indented code blocks.
+ */
+function stripMarkdown(output: string): string {
+  return output
+    .replace(/```[\s\S]*?```/g, "") // remove fenced code blocks
+    .replace(/^\s*`([^`]+)`\s*$/gm, "$1") // remove inline backtick wrappers
+    .trim();
+}
+
 /**
  * Extract UPPER_SNAKE_CASE keys from step output.
- * Matches lines like "STATUS: done", "SCORE: 85", etc.
+ * Fix #4: Case-insensitive match + multiline mode + markdown strip.
+ * Matches lines like "STATUS: done", "SCORE: 85", also "score: 72" (normalized to uppercase).
  */
 function parseOutputKeys(output: string): string[] {
   const keys: string[] = [];
-  for (const line of output.split("\n")) {
-    const match = line.match(/^([A-Z_]+):\s*/);
-    if (match) keys.push(match[1]);
+  const cleaned = stripMarkdown(output);
+  for (const line of cleaned.split("\n")) {
+    // Case-insensitive: match any case, normalize to uppercase for comparison
+    const match = line.match(/^([A-Za-z_]+):\s*/);
+    if (match) keys.push(match[1].toUpperCase());
   }
   return keys;
 }
 
-export { ROLE_REQUIRED_FIELDS };
+export { SCHEMA_REQUIRED_FIELDS };

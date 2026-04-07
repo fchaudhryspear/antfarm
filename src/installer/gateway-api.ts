@@ -113,6 +113,26 @@ function isTransientGatewayFailure(status: number | undefined): boolean {
   return status === 404 || status >= 500;
 }
 
+/** Retry helper with exponential backoff for transient gateway failures. */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  { retries = 2, baseDelayMs = 1000 }: { retries?: number; baseDelayMs?: number } = {},
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries) {
+        const delay = baseDelayMs * Math.pow(2, attempt);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
 // ---------------------------------------------------------------------------
 // Cron operations — HTTP first, CLI fallback
 // ---------------------------------------------------------------------------
@@ -126,12 +146,18 @@ export async function createAgentCronJob(job: {
   delivery?: { mode: "none" | "announce"; channel?: string; to?: string };
   enabled: boolean;
 }): Promise<{ ok: boolean; error?: string; id?: string }> {
-  // --- Try HTTP first ---
-  const httpResult = await createAgentCronJobHTTP(job);
-  if (httpResult !== null) return httpResult;
+  // Retry the full HTTP→CLI sequence to handle post-restart gateway flakiness.
+  // Without retry, a single transient failure (gateway briefly unresponsive after restart)
+  // causes permanent cron loss for that agent.
+  return withRetry(async () => {
+    // --- Try HTTP first ---
+    const httpResult = await createAgentCronJobHTTP(job);
+    if (httpResult !== null) {
+      if (!httpResult.ok) throw new Error(httpResult.error ?? "HTTP cron creation failed");
+      return httpResult;
+    }
 
-  // --- Fallback to CLI ---
-  try {
+    // --- Fallback to CLI ---
     const args = ["cron", "add", "--json", "--name", job.name];
 
     if (job.schedule.kind === "every" && job.schedule.everyMs) {
@@ -173,9 +199,9 @@ export async function createAgentCronJob(job: {
       // CLI succeeded but output wasn't JSON — still ok
       return { ok: true };
     }
-  } catch (err) {
-    return { ok: false, error: `CLI fallback failed: ${err}. ${UPDATE_HINT}` };
-  }
+  }, { retries: 2, baseDelayMs: 1500 }).catch(err => {
+    return { ok: false, error: `Cron creation failed after retries: ${err}. ${UPDATE_HINT}` };
+  });
 }
 
 /** HTTP-only attempt. Returns null on 404 (signals: use CLI fallback). */
@@ -373,6 +399,7 @@ export async function spawnAgentSession(params: {
   task: string;
   timeoutSeconds?: number;
 }): Promise<{ ok: boolean; error?: string }> {
+  // --- Try HTTP first ---
   const payload = {
     tool: "sessions_spawn",
     args: {
@@ -399,33 +426,33 @@ export async function spawnAgentSession(params: {
 
     if (response.ok) {
       const result = await response.json();
-      return result.ok ? { ok: true } : { ok: false, error: result.error?.message ?? "Unknown error" };
+      if (result.ok) return { ok: true };
+      // HTTP succeeded but tool returned error — fall through to CLI
     }
-
-    if (isTransientGatewayFailure(response.status)) {
-      // fallback to CLI
-    } else {
-      const text = await response.text();
-      return { ok: false, error: `Gateway returned ${response.status}: ${text}` };
-    }
+    // Transient or error — fall through to CLI fallback
   } catch {
-    // fallback to CLI
+    // Network error — fall through to CLI fallback
   }
 
-  // CLI fallback
+  // --- CLI fallback: openclaw agent --agent <id> --message <task> ---
   try {
-    const args = ["tool", "run", "--tool", "sessions_spawn", "--json"];
-    if (params.agentId) args.push("--agent", params.agentId);
+    const args = ["agent", "--agent", params.agentId, "--message", params.task];
     if (params.model) args.push("--model", params.model);
-    if (params.task) args.push("--message", params.task);
+    if (params.timeoutSeconds) args.push("--timeout", `${params.timeoutSeconds}`);
+    args.push("--json");
     await runCli(args);
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: `CLI fallback failed: ${err}. ${UPDATE_HINT}` };
+    return { ok: false, error: `Spawn failed (HTTP + CLI): ${err}. ${UPDATE_HINT}` };
   }
 }
 
-export async function sendSessionMessage(params: { sessionKey: string; message: string }): Promise<{ ok: boolean; error?: string }> {
+export async function sendSessionMessage(params: {
+  sessionKey: string;
+  message: string;
+  agentId?: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  // --- Try HTTP first ---
   const payload = {
     tool: "sessions_send",
     args: {
@@ -436,7 +463,6 @@ export async function sendSessionMessage(params: { sessionKey: string; message: 
     sessionKey: params.sessionKey,
   };
 
-  // --- Try HTTP first ---
   const gateway = await getGatewayConfig();
   try {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -450,34 +476,23 @@ export async function sendSessionMessage(params: { sessionKey: string; message: 
 
     if (response.ok) {
       const result = await response.json();
-      return result.ok ? { ok: true } : { ok: false, error: result.error?.message ?? "Unknown error" };
+      if (result.ok) return { ok: true };
+      // HTTP succeeded but tool returned error — fall through to CLI
     }
-
-    if (isTransientGatewayFailure(response.status)) {
-      // fallback to CLI
-    } else {
-      const text = await response.text();
-      return { ok: false, error: `Gateway returned ${response.status}: ${text}` };
-    }
+    // Transient or error — fall through to CLI fallback
   } catch {
-    // fallback to CLI
+    // Network error — fall through to CLI fallback
   }
 
-  // --- Fallback to CLI ---
+  // --- CLI fallback: openclaw agent --agent <id> --message <msg> ---
+  // Extract agent id from sessionKey (format: agent:<agentId>:<channel>:...)
+  // or use the explicit agentId param if provided.
+  const agentId = params.agentId ?? params.sessionKey.split(":")[1] ?? "main";
   try {
-    await runCli([
-      "tool",
-      "run",
-      "--tool",
-      "sessions_send",
-      "--session",
-      params.sessionKey,
-      "--json",
-      "--message",
-      params.message,
-    ]);
+    const args = ["agent", "--agent", agentId, "--message", params.message, "--json"];
+    await runCli(args);
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: `CLI fallback failed: ${err}. ${UPDATE_HINT}` };
+    return { ok: false, error: `Send failed (HTTP + CLI): ${err}. ${UPDATE_HINT}` };
   }
 }

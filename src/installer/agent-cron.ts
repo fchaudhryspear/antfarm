@@ -73,6 +73,14 @@ RULES:
 2. Write output to a file first, then pipe via stdin (shell escaping breaks direct args)
 3. If you're unsure whether to complete or fail, call step fail with an explanation
 
+// Fix #3 (RCA 322-325): Session timeout hook — register emergency exit handler.
+// If the session is killed (timeout, OOM, token limit), the shell will execute this on exit.
+SESSION_TIMEOUT_HOOK=$(mktemp)
+echo '#!/bin/bash' > "$SESSION_TIMEOUT_HOOK"
+echo "node ${cli} step fail '<stepId>' 'Session timeout — no output produced'" >> "$SESSION_TIMEOUT_HOOK"
+chmod +x "$SESSION_TIMEOUT_HOOK"
+trap "bash $SESSION_TIMEOUT_HOOK; rm -f $SESSION_TIMEOUT_HOOK" EXIT
+
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
 
@@ -111,6 +119,15 @@ RULES:
 1. NEVER end your session without calling step complete or step fail
 2. Write output to a file first, then pipe via stdin (shell escaping breaks direct args)
 3. If you're unsure whether to complete or fail, call step fail with an explanation
+
+// Fix #3 (RCA 322-325): Session timeout hook — register emergency exit handler.
+// Parses stepId from the JSON you received, then sets a trap to auto-fail on session death.
+SESSION_TIMEOUT_HOOK=$(mktemp)
+STEP_ID=$(echo '<stepId>' | grep -oP '(?<=<)[^>]+(?=>)' || echo '<stepId>')
+echo '#!/bin/bash' > "$SESSION_TIMEOUT_HOOK"
+echo "node ${cli} step fail \"$STEP_ID\" 'Session timeout — no output produced'\"" >> "$SESSION_TIMEOUT_HOOK"
+chmod +x "$SESSION_TIMEOUT_HOOK"
+trap "bash $SESSION_TIMEOUT_HOOK; rm -f $SESSION_TIMEOUT_HOOK" EXIT
 
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
@@ -276,10 +293,20 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
   const workflowPollingModel = workflow.polling?.model ?? DEFAULT_POLLING_MODEL;
   const workflowPollingTimeout = workflow.polling?.timeoutSeconds ?? DEFAULT_POLLING_TIMEOUT_SECONDS;
 
-  // Preflight: verify cron tool is accessible before attempting to create/update jobs
-  const preflight = await checkCronToolAvailable();
+  // Preflight: verify cron tool is accessible before attempting to create/update jobs.
+  // Retry up to 3 times with backoff to handle post-restart gateway instability where
+  // /health passes but the cron tool isn't yet initialized.
+  let preflight: { ok: boolean; error?: string } = { ok: false, error: "preflight not attempted" };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    preflight = await checkCronToolAvailable();
+    if (preflight.ok) break;
+    if (attempt < 2) {
+      log.debug(`Cron preflight attempt ${attempt + 1} failed for "${workflow.id}", retrying in ${(attempt + 1) * 2}s...`);
+      await new Promise(r => setTimeout(r, (attempt + 1) * 2000));
+    }
+  }
   if (!preflight.ok) {
-    log.debug(`Cron preflight failed for "${workflow.id}": ${preflight.error}`);
+    log.debug(`Cron preflight failed for "${workflow.id}" after 3 attempts: ${preflight.error}`);
     throw new Error(preflight.error!);
   }
   log.debug(`Cron preflight OK for "${workflow.id}", processing ${agents.length} agents`);
