@@ -26,14 +26,14 @@ interface ActiveRun {
 
 function getActiveRuns(): ActiveRun[] {
   const dbPath = path.join(os.homedir(), '.openclaw', 'antfarm', 'antfarm.db');
-  const output = execSync(`sqlite3 "${dbPath}" "SELECT id, workflow_id, status, task, updated_at FROM runs WHERE status = 'running' ORDER BY updated_at DESC;"`, {
+  const output = execSync(`sqlite3 -separator $'\t' "${dbPath}" "SELECT id, workflow_id, status, COALESCE(REPLACE(task, char(10), ' '), ''), COALESCE(updated_at, '') FROM runs WHERE status = 'running' ORDER BY updated_at DESC;"`, {
     encoding: 'utf-8'
   });
   
   if (!output.trim()) return [];
   
   return output.trim().split('\n').map(line => {
-    const [id, workflow_id, status, task, updated_at] = line.split('|');
+    const [id = '', workflow_id = '', status = '', task = '', updated_at = ''] = line.split('\t');
     return { id, workflow_id, status, task, updated_at };
   });
 }
@@ -60,7 +60,9 @@ export async function recoverCrons(dryRun = false): Promise<{
     console.log('🔍 Dry run — no changes will be made\n');
     console.log(`Found ${activeRuns.length} active run(s) across ${workflows.length} workflow(s):\n`);
     for (const run of activeRuns) {
-      console.log(`   #${run.id.slice(0, 8)}  ${run.workflow_id}  ${run.task.slice(0, 50)}...`);
+      const shortId = (run.id || '').slice(0, 8) || 'unknown';
+      const taskPreview = (run.task || '').slice(0, 50);
+      console.log(`   #${shortId}  ${run.workflow_id || 'unknown'}  ${taskPreview}${run.task && run.task.length > 50 ? '...' : ''}`);
     }
     console.log(`\nWould call ensure-crons for: ${workflows.join(', ')}`);
     return result;
