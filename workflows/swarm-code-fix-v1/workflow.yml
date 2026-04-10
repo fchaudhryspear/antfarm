@@ -241,42 +241,24 @@ steps:
 
       {{ fix_directive }}
 
-      STEP 1: cd {{ repo_path }} — confirm the directory exists.
-      STEP 2: git status — confirm it is a git repo.
-      STEP 3: git checkout -b {{ branch }} 2>/dev/null || git checkout {{ branch }}
-      STEP 4: Shared-file detection — scan ALL_FINDINGS above and identify any file paths
-        that appear in findings from more than one domain. Output a SHARED_FILES: list.
-        These are high-conflict-risk files — downstream fixers will use this map.
+      Perform setup only.
 
-      STEP 5: Domain-specific finding extraction — parse ALL_FINDINGS and output per-domain sections:
-        SECURITY_FINDINGS: <security-related findings only>
-        BACKEND_FINDINGS: <backend-related findings only>
-        PERFORMANCE_FINDINGS: <performance-related findings only>
-        FRONTEND_FINDINGS: <frontend-related findings only>
-        DEVOPS_FINDINGS: <devops-related findings only>
-        TESTING_FINDINGS: <testing-related findings only>
-        CODE_QUALITY_FINDINGS: <code-quality findings only>
-        UX_FINDINGS: <ux-related findings only>
-        DOCS_FINDINGS: <documentation findings only>
-        PRODUCT_FINDINGS: <product-related findings only>
-        Each section should contain ONLY the findings relevant to that domain.
-        If findings_format is JSON, filter by domain/category field.
-        If freetext, use keyword matching to classify findings.
+      Required actions:
+      1. Confirm {{ repo_path }} exists and is a git repo.
+      2. Checkout or create branch {{ branch }}.
+      3. Detect shared file paths mentioned in ALL_FINDINGS, if any.
+      4. Detect whether ALL_FINDINGS is json or freetext.
+
+      Do not classify findings into domain sections here.
+      Do not review code.
+      Do not fix anything.
 
       Output format:
         SETUP_OK: branch={{ branch }} repo={{ repo_path }}
         SHARED_FILES: file1.py (security+backend), file2.ts (frontend+ux), ...
         If no shared files: SHARED_FILES: none
-        SECURITY_FINDINGS: <security-related findings>
-        BACKEND_FINDINGS: <backend-related findings>
-        PERFORMANCE_FINDINGS: <performance-related findings>
-        FRONTEND_FINDINGS: <frontend-related findings>
-        DEVOPS_FINDINGS: <devops-related findings>
-        TESTING_FINDINGS: <testing-related findings>
-        CODE_QUALITY_FINDINGS: <code-quality findings>
-        UX_FINDINGS: <ux-related findings>
-        DOCS_FINDINGS: <documentation findings>
-        PRODUCT_FINDINGS: <product-related findings>
+        FINDINGS_FORMAT: json | freetext
+        FINDING_OWNER_MAP: {}
 
   - id: fix-code-quality
     agent: fix-code-quality
