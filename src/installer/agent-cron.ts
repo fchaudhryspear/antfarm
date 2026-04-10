@@ -1,4 +1,4 @@
-import { createAgentCronJob, deleteAgentCronJobs, listCronJobs, checkCronToolAvailable, deleteCronJob } from "./gateway-api.js";
+import { createAgentCronJob, deleteAgentCronJobs, listCronJobs, checkCronToolAvailable } from "./gateway-api.js";
 import type { WorkflowSpec } from "./types.js";
 import { resolveAntfarmCli } from "./paths.js";
 import { getDb } from "../db.js";
@@ -13,7 +13,6 @@ const log = {
 
 const DEFAULT_EVERY_MS = 60_000; // 1 minute — v4 fix (was 300_000)
 const CRON_RETRY_DELAYS_MS = [1000, 3000, 8000];
-const PREFLIGHT_CRON_PREFIX = "_preflight_cron_smoke_";
 
 /**
  * Bug #23 fix: Check DB step status before claiming.
@@ -350,44 +349,6 @@ async function sleep(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function verifyCronReadiness(): Promise<void> {
-  const testJobName = `${PREFLIGHT_CRON_PREFIX}${Date.now()}`;
-  const testAgentId = "antfarm_preflight_smoke";
-  let createdJobId: string | undefined;
-
-  const createResult = await createAgentCronJob({
-    name: testJobName,
-    schedule: { kind: "every", everyMs: 31 * 24 * 60 * 60 * 1000, anchorMs: 0 },
-    sessionTarget: "isolated",
-    agentId: testAgentId,
-    payload: { kind: "agentTurn", message: "HEARTBEAT_OK", timeoutSeconds: 30 },
-    delivery: { mode: "none" },
-    enabled: false,
-  });
-
-  if (!createResult.ok) {
-    throw new Error(`Cron subsystem not ready: ${createResult.error ?? "create failed"}`);
-  }
-
-  createdJobId = createResult.id;
-
-  if (!createdJobId) {
-    const jobs = await listCronJobs();
-    if (jobs.ok && jobs.jobs) {
-      createdJobId = jobs.jobs.find(job => job.name === testJobName)?.id;
-    }
-  }
-
-  if (createdJobId) {
-    const deleteResult = await deleteCronJob(createdJobId);
-    if (!deleteResult.ok) {
-      log.warn(`Preflight cron cleanup failed for ${testJobName}: ${deleteResult.error ?? "unknown error"}`);
-    }
-  } else {
-    log.warn(`Preflight cron cleanup skipped, could not resolve id for ${testJobName}`);
-  }
-}
-
 async function createAgentCronWithBackoff(job: Parameters<typeof createAgentCronJob>[0], failureMessage: string): Promise<void> {
   let lastError = "unknown error";
   for (let attempt = 0; attempt <= CRON_RETRY_DELAYS_MS.length; attempt++) {
@@ -413,14 +374,7 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
   let preflight: { ok: boolean; error?: string } = { ok: false, error: "preflight not attempted" };
   for (let attempt = 0; attempt < 3; attempt++) {
     preflight = await checkCronToolAvailable();
-    if (preflight.ok) {
-      try {
-        await verifyCronReadiness();
-        break;
-      } catch (err) {
-        preflight = { ok: false, error: err instanceof Error ? err.message : String(err) };
-      }
-    }
+    if (preflight.ok) break;
     if (attempt < 2) {
       const delay = CRON_RETRY_DELAYS_MS[Math.min(attempt, CRON_RETRY_DELAYS_MS.length - 1)];
       log.debug(`Cron preflight attempt ${attempt + 1} failed for "${workflow.id}", retrying in ${delay}ms...`, { error: preflight.error });
