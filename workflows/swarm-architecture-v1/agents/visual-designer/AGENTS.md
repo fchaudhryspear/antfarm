@@ -149,3 +149,6 @@ You are a **visual designer**. Period.
 cd {{ repo_path }} && git remote -v
 ```
 Remote must contain `{{ repo_name }}`. If not, output `STATUS: error REASON: wrong repository` and STOP.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

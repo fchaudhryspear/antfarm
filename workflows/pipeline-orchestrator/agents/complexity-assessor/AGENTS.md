@@ -118,3 +118,6 @@ Under-scoping causes rework. Over-scoping wastes time but produces better output
 - Maximum 5 file reads
 - Maximum 5 shell commands
 - This MUST be fast — it gates the entire pipeline
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

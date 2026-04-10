@@ -1,5 +1,12 @@
 # AGENTS.md - Product Strategist
 
+## Mandatory First Step
+Before any other work, run:
+```
+cd {{ repo_path }}
+```
+
+
 ## ⚠️ MANDATORY OUTPUT FORMAT — HARD CONTRACT
 
 Your response MUST begin with:
@@ -96,3 +103,6 @@ After `PRODUCT_ANALYSIS: complete`, output this JSON:
 ## Output Size
 
 Keep JSON under 3000 characters. Be precise, not verbose.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

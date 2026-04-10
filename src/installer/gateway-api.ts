@@ -11,6 +11,13 @@ interface GatewayConfig {
   secret?: string;
 }
 
+function resolveEnvPlaceholder(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = value.match(/^\$\{([A-Z0-9_]+)\}$/);
+  if (!match) return value;
+  return process.env[match[1]];
+}
+
 async function readOpenClawConfig(): Promise<{
   port?: number;
   token?: string;
@@ -23,11 +30,11 @@ async function readOpenClawConfig(): Promise<{
     const config = JSON.parse(content);
     return {
       port: config.gateway?.port,
-      token: config.gateway?.auth?.token,
+      token: resolveEnvPlaceholder(config.gateway?.auth?.token),
       authMode: config.gateway?.auth?.mode as "token" | "password" | undefined,
       password:
         process.env.OPENCLAW_GATEWAY_PASSWORD ??
-        config.gateway?.auth?.password,
+        resolveEnvPlaceholder(config.gateway?.auth?.password),
     };
   } catch {
     return {};
@@ -146,18 +153,9 @@ export async function createAgentCronJob(job: {
   delivery?: { mode: "none" | "announce"; channel?: string; to?: string };
   enabled: boolean;
 }): Promise<{ ok: boolean; error?: string; id?: string }> {
-  // Retry the full HTTP→CLI sequence to handle post-restart gateway flakiness.
-  // Without retry, a single transient failure (gateway briefly unresponsive after restart)
-  // causes permanent cron loss for that agent.
+  // Cron is denied by default over gateway HTTP /tools/invoke, so prefer CLI first.
+  // This also avoids HTTP-only transport quirks on cron creation.
   return withRetry(async () => {
-    // --- Try HTTP first ---
-    const httpResult = await createAgentCronJobHTTP(job);
-    if (httpResult !== null) {
-      if (!httpResult.ok) throw new Error(httpResult.error ?? "HTTP cron creation failed");
-      return httpResult;
-    }
-
-    // --- Fallback to CLI ---
     const args = ["cron", "add", "--json", "--name", job.name];
 
     if (job.schedule.kind === "every" && job.schedule.everyMs) {
@@ -190,14 +188,21 @@ export async function createAgentCronJob(job: {
       args.push("--disabled");
     }
 
-    const stdout = await runCli(args);
-    // Try to parse JSON output for the job id
     try {
-      const parsed = JSON.parse(stdout);
-      return { ok: true, id: parsed.id ?? parsed.jobId };
-    } catch {
-      // CLI succeeded but output wasn't JSON — still ok
-      return { ok: true };
+      const stdout = await runCli(args);
+      try {
+        const parsed = JSON.parse(stdout);
+        return { ok: true, id: parsed.id ?? parsed.jobId };
+      } catch {
+        return { ok: true };
+      }
+    } catch (cliErr) {
+      const httpResult = await createAgentCronJobHTTP(job);
+      if (httpResult !== null) {
+        if (!httpResult.ok) throw new Error(httpResult.error ?? `CLI failed: ${cliErr}`);
+        return httpResult;
+      }
+      throw cliErr;
     }
   }, { retries: 2, baseDelayMs: 1500 }).catch(err => {
     return { ok: false, error: `Cron creation failed after retries: ${err}. ${UPDATE_HINT}` };
@@ -340,16 +345,13 @@ async function listCronJobsHTTP(): Promise<{ ok: boolean; jobs?: Array<{ id: str
 }
 
 export async function deleteCronJob(jobId: string): Promise<{ ok: boolean; error?: string }> {
-  // --- Try HTTP first ---
-  const httpResult = await deleteCronJobHTTP(jobId);
-  if (httpResult !== null) return httpResult;
-
-  // --- CLI fallback ---
   try {
     await runCli(["cron", "rm", jobId, "--json"]);
     return { ok: true };
-  } catch (err) {
-    return { ok: false, error: `CLI fallback failed: ${err}. ${UPDATE_HINT}` };
+  } catch (cliErr) {
+    const httpResult = await deleteCronJobHTTP(jobId);
+    if (httpResult !== null) return httpResult;
+    return { ok: false, error: `CLI fallback failed: ${cliErr}. ${UPDATE_HINT}` };
   }
 }
 

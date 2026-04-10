@@ -77,7 +77,7 @@ agents:
       baseDir: agents/complexity-assessor
       files:
         AGENTS.md: agents/complexity-assessor/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/glm-5.1:cloud
 
   - id: pipeline-controller
     name: Pipeline Controller
@@ -95,7 +95,7 @@ agents:
       baseDir: agents/gate-keeper
       files:
         AGENTS.md: agents/gate-keeper/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/glm-5.1:cloud
 
   - id: pipeline-reporter
     name: Pipeline Reporter
@@ -169,7 +169,7 @@ steps:
       And STOP.
 
       Otherwise, DISPATCH swarm-requirements-v1:
-      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-requirements-v1 "Generate PRD for: {{ feature_request }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context feature_request="{{ feature_request }}"
+      Run: node /Users/faisalshomemacmini/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-requirements-v1 "Generate PRD for: {{ feature_request }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context feature_request="{{ feature_request }}"
 
       POLL until complete (every 30s, timeout 5400s).
       EXTRACT: Locate PRD file (typically {{ repo_path }}/docs/prd/*.json or {{ repo_path }}/PRD.md).
@@ -241,7 +241,7 @@ steps:
 
       Otherwise, extract prd_path from REQUIREMENTS_DONE.
       DISPATCH swarm-architecture-v1:
-      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-architecture-v1 "Design architecture for: {{ feature_request }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context prd_path=<prd_path>
+      Run: node /Users/faisalshomemacmini/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-architecture-v1 "Design architecture for: {{ feature_request }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context prd_path=<prd_path>
 
       POLL until complete (every 30s, timeout 5400s).
       EXTRACT: Locate architecture spec.
@@ -310,7 +310,7 @@ steps:
       Extract arch_path from ARCHITECTURE_DONE (may be "skipped" for Tier 1/2).
 
       DISPATCH swarm-implement-v1:
-      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-implement-v1 "Implement: {{ feature_request }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context prd_path=<prd_path> --context arch_path=<arch_path>
+      Run: node /Users/faisalshomemacmini/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-implement-v1 "Implement: {{ feature_request }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context prd_path=<prd_path> --context arch_path=<arch_path>
 
       POLL until complete (every 30s, timeout 5400s).
 
@@ -351,7 +351,7 @@ steps:
       If TIER=2 or 3, use review_mode=full.
 
       DISPATCH swarm-code-review-v3:
-      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-code-review-v3 "Review code on {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context review_mode=<full|diff-only> --context prd_path=<prd_path>
+      Run: node /Users/faisalshomemacmini/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-code-review-v3 "Review code on {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context review_mode=<full|diff-only> --context prd_path=<prd_path>
 
       POLL until complete (every 30s, timeout 5400s).
 
@@ -390,7 +390,7 @@ steps:
       Extract findings and prd_path from review output.
 
       DISPATCH swarm-code-fix-v1:
-      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-code-fix-v1 "Fix findings on {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context findings="<findings>" --context prd_path=<prd_path>
+      Run: node /Users/faisalshomemacmini/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-code-fix-v1 "Fix findings on {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context findings="<findings>" --context prd_path=<prd_path>
 
       POLL until complete (every 30s, timeout 5400s).
 
@@ -429,7 +429,7 @@ steps:
       Extract prd_path from fix output.
 
       DISPATCH swarm-qa-v1:
-      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-qa-v1 "QA validation for {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context prd_path=<prd_path>
+      Run: node /Users/faisalshomemacmini/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-qa-v1 "QA validation for {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context prd_path=<prd_path>
 
       POLL until complete (every 30s, timeout 5400s).
 
@@ -442,7 +442,7 @@ steps:
         Check if this is cycle 1 or cycle 2.
         - CYCLE 1: Extract blocking issues from QA report.
           Re-dispatch swarm-code-fix-v1 with QA findings as additional context:
-          Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-code-fix-v1 "Fix QA failures on {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context findings="<QA blocking issues>"
+          Run: node /Users/faisalshomemacmini/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-code-fix-v1 "Fix QA failures on {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }} --context findings="<QA blocking issues>"
           Wait for fix to complete.
           Re-dispatch swarm-qa-v1 with same parameters.
           Wait for QA to complete.
@@ -498,7 +498,7 @@ steps:
       And STOP.
 
       Otherwise, DISPATCH swarm-release-v1:
-      Run: node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-release-v1 "Release {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }}
+      Run: node /Users/faisalshomemacmini/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run swarm-release-v1 "Release {{ branch }}" --repo-path={{ repo_path }} --context repo_name={{ repo_name }} --context branch={{ branch }}
 
       POLL until complete (every 30s, timeout 5400s).
 
@@ -590,10 +590,31 @@ steps:
 
       Write to {{ repo_path }}/docs/retrospectives/$(date +%Y-%m-%d)-{{ branch }}.md
 
+  - id: validate-retrospective
+    agent: pipeline-reporter
+    depends_on: [retrospective]
+    timeout_minutes: 5
+    expects: 'STATUS:'
+    timeoutSeconds: 300
+    max_retries: 1
+    on_fail: escalate_to_human
+    input: |
+      Validate the retrospective completed successfully.
+
+      RETRO_OUTPUT: {{ steps.retrospective.summary }}
+      REQUIRED_TOKEN: RETRO_STATUS
+
+      If RETRO_STATUS is present in the retrospective output, report STATUS: ok
+      If RETRO_STATUS is not found, report STATUS: failed REASON: retrospective output missing token
+
 hooks:
   onSuccess:
-    - run: echo "[pipeline-orchestrator v2.0] ✅ SDLC pipeline completed for {{ repo_name }} on {{ branch }}"
-    - run: echo "[pipeline-orchestrator v2.0] Tier: {{ steps.assess-complexity.summary }} | QA: {{ steps.dispatch-qa.summary }}"
+    - run: |
+        echo "[pipeline-orchestrator v2.0] ✅ SDLC pipeline completed for {{ repo_name }} on {{ branch }}"
+    - run: |
+        echo "[pipeline-orchestrator v2.0] Tier: {{ steps.assess-complexity.summary }} | QA: {{ steps.dispatch-qa.summary }}"
   onFailure:
-    - run: echo "[pipeline-orchestrator v2.0] ❌ Pipeline FAILED for {{ repo_name }} on {{ branch }}"
-    - run: echo "[pipeline-orchestrator v2.0] Failed at step: ${FAILED_STEP:-unknown}"
+    - run: |
+        echo "[pipeline-orchestrator v2.0] ❌ Pipeline FAILED for {{ repo_name }} on {{ branch }}"
+    - run: |
+        echo "[pipeline-orchestrator v2.0] Failed at step: ${FAILED_STEP:-unknown}"

@@ -1,5 +1,12 @@
 # AGENTS.md - Pipeline Controller (v1.0)
 
+## ⚠️ MANDATORY FIRST STEP
+
+```bash
+cd {{ repo_path }}
+git checkout {{ branch }} 2>/dev/null || git checkout main
+```
+
 ## MANDATORY OUTPUT FORMAT — HARD CONTRACT
 
 Your response MUST contain the phase-specific completion marker on a separate line.
@@ -67,6 +74,16 @@ You are a **sub-workflow dispatcher**. Period.
 - Do NOT spawn sub-agents
 - Your ONLY job: dispatch antfarm workflows via CLI, poll for completion, extract outputs
 
+## ANTI-FABRICATION CLAUSE
+
+You MUST NOT fabricate:
+- Sub-workflow status — only report what the CLI returns
+- Phase outputs — only extract what exists in artifacts
+- PR URLs — only report actual GitHub PR URLs
+- File paths — only use actual paths from sub-workflow outputs
+
+If you cannot find required sub-workflow information, output `<PHASE>_FAIL: cannot find required data`.
+
 ## Dispatch Protocol
 
 ### Step 1 — Pre-Flight Validation
@@ -82,7 +99,7 @@ Use the antfarm CLI to dispatch the target swarm:
 
 ```bash
 START_TIME=$(date +%s)
-node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run <swarm-id> "<task description>" \
+node /Users/faisalshomemacmini/.openclaw/workspace/antfarm/dist/cli/cli.js workflow run <swarm-id> "<task description>" \
   --repo-path={{ repo_path }} \
   --context repo_name={{ repo_name }} \
   --context branch={{ branch }} \
@@ -95,7 +112,7 @@ Record the task title exactly as passed — you need it for status polling.
 
 ```bash
 while true; do
-  STATUS=$(node ~/.openclaw/workspace/antfarm/dist/cli/cli.js workflow status "<exact task title>" 2>&1)
+  STATUS=$(node /Users/faisalshomemacmini/.openclaw/workspace/antfarm/dist/cli/cli.js workflow status "<exact task title>" 2>&1)
   echo "Poll: $STATUS"
 
   # Check for completion

@@ -25,6 +25,8 @@ context:
   exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
   release_directive: "Work in {{ repo_path }} on branch {{ branch }}. Do NOT fabricate results. Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata. Exclude: {{ exclude_patterns }}."
 
+
+
 acceptance_criteria:
   - "Staging deployment succeeds or failure is documented with root cause"
   - "Smoke tests run against staging (or dry-run if no staging_url)"
@@ -274,6 +276,20 @@ steps:
         SMOKE_PASS_RATE: <n/m>
         BLOCKING_ISSUES: [list, max 10]
         REPORT_PATH: <path to readiness report>
+
+  - id: validate-compile-release
+    agent: release-compiler
+    depends_on: [compile-release]
+    timeout_minutes: 5
+    expects: 'STATUS:'
+    input: |
+      Validate the prior compiler/consolidator output is present.
+
+      PRIOR_OUTPUT: {{ steps.compile-release.summary }}
+      REQUIRED_TOKEN: RELEASE_STATUS
+
+      If RELEASE_STATUS is found in the prior output, report STATUS: ok
+      If RELEASE_STATUS is not found, report STATUS: failed REASON: missing RELEASE_STATUS
 
 hooks:
   onSuccess:

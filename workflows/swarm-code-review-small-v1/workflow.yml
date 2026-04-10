@@ -1,0 +1,219 @@
+id: swarm-code-review-small-v1
+name: 4-Agent Lightweight Code Review
+version: 1.0
+workflow_objective: Fast parallel codebase review using 4 focused agents (security, code quality, backend, testing) with consolidated output.
+description: >
+  Lightweight variant of swarm-code-review-v3. Runs 4 agents in parallel instead of 10 for
+  faster turnaround on routine reviews. Covers the highest-value dimensions: security, code quality,
+  backend architecture, and testing strategy. Same consolidation step merges all 4 reports.
+context:
+  repo_path: "" # REQUIRED at dispatch time: --repo-path=/path/to/repo
+  repo_name: "" # REQUIRED at dispatch time: --context repo_name=my-project
+  scope: full-stack
+  focus_areas: security,code-quality,architecture,testing
+  review_mode: full # Options: full | diff-only
+  diff_base: main
+  exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
+  review_directive: "Analyze the actual source code in {{ repo_path }}. Read source files before producing findings. Do NOT fabricate reviews. Do NOT discuss the workflow, pipeline, agent infrastructure, or task metadata. Exclude: {{ exclude_patterns }}. Review mode: {{ review_mode }}. If review_mode=diff-only, ONLY review files changed between {{ diff_base }} and current branch (run: git diff --name-only {{ diff_base }}..HEAD). If review_mode=full, review the entire codebase."
+
+
+acceptance_criteria:
+  - All 4 review agents complete in parallel
+  - All 4 agents produce SCORE: and at least 1 finding from actual source code
+  - Consolidation merges all 4 reports into ranked output
+  - Total runtime under 15 minutes
+  - No sub-agent spawn failures
+polling:
+  model: ollama-cloud/qwen3.5:397b-cloud
+  delivery:
+    channel: telegram
+  timeoutSeconds: 2400
+agents:
+  - id: code-quality
+    name: Code Quality Analyst
+    role: analysis
+    workspace:
+      baseDir: agents/code-quality
+      files:
+        AGENTS.md: agents/code-quality/AGENTS.md
+    model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
+  - id: security-auditor
+    name: Security Auditor
+    role: scanning
+    workspace:
+      baseDir: agents/security-auditor
+      files:
+        AGENTS.md: agents/security-auditor/AGENTS.md
+    model: ollama-cloud/devstral-2:123b-cloud
+    delivery:
+      channel: telegram
+  - id: backend-architect
+    name: Backend Architect
+    role: analysis
+    workspace:
+      baseDir: agents/backend-architect
+      files:
+        AGENTS.md: agents/backend-architect/AGENTS.md
+    model: ollama-cloud/kimi-k2.5:cloud
+    delivery:
+      channel: telegram
+  - id: testing-strategist
+    name: Testing Strategist
+    role: testing
+    workspace:
+      baseDir: agents/testing-strategist
+      files:
+        AGENTS.md: agents/testing-strategist/AGENTS.md
+    model: ollama-cloud/qwen3.5:397b-cloud
+    delivery:
+      channel: telegram
+  - id: consolidate
+    name: Consolidator
+    role: analysis
+    workspace:
+      baseDir: agents/consolidate
+      files:
+        AGENTS.md: agents/consolidate/AGENTS.md
+    model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+steps:
+  - id: code-quality-review
+    agent: code-quality
+    timeout_minutes: 30
+    expects: 'SCORE:'
+    timeoutSeconds: 2400
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      SCOPE: {{ scope }}
+      FOCUS_AREAS: {{ focus_areas }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      CRITICAL INSTRUCTIONS:
+      {{ review_directive }}
+
+      STEP 1: cd into {{ repo_path }} and run: find . -name "*.ts" -o -name "*.tsx" -o -name "*.py" -o -name "*.js" | grep -v -E '{{ exclude_patterns }}' | head -50
+      STEP 2: Read and analyze the actual source code files found in Step 1.
+      STEP 3: Produce your findings based ONLY on code you actually read.
+
+      If you cannot find source code at REPO_PATH, report that as your only finding — do NOT fabricate a review.
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+
+      Review code quality within the scope above. Limit to 7 findings max.
+    max_retries: 2
+  - id: security-audit
+    agent: security-auditor
+    timeout_minutes: 30
+    expects: 'SCORE:'
+    timeoutSeconds: 2400
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      SCOPE: {{ scope }}
+      FOCUS_AREAS: {{ focus_areas }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      CRITICAL INSTRUCTIONS:
+      {{ review_directive }}
+
+      STEP 1: cd into {{ repo_path }} and run: find . -name "*.ts" -o -name "*.tsx" -o -name "*.py" -o -name "*.js" -o -name "*.yml" -o -name "*.yaml" -o -name "*.json" | grep -v -E '{{ exclude_patterns }}' | head -50
+      STEP 2: Read and analyze the actual source code for security vulnerabilities.
+      STEP 3: Produce your findings based ONLY on code you actually read.
+
+      If you cannot find source code at REPO_PATH, report that as your only finding — do NOT fabricate a review.
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+
+      Audit security within the scope above. Limit to 7 findings max.
+    max_retries: 2
+  - id: backend-review
+    agent: backend-architect
+    timeout_minutes: 30
+    expects: 'SCORE:'
+    timeoutSeconds: 2400
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      SCOPE: {{ scope }}
+      FOCUS_AREAS: {{ focus_areas }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      CRITICAL INSTRUCTIONS:
+      {{ review_directive }}
+
+      STEP 1: cd into {{ repo_path }} and run: find . -path "*/backend/*" -o -path "*/lambdas/*" -o -path "*/services/*" -o -path "*/migrations/*" -o -name "*.py" | grep -v -E '{{ exclude_patterns }}' | head -50
+      STEP 2: Read and analyze the actual backend code for architecture issues (API design, error handling, DB schema, Lambda structure, service boundaries).
+      STEP 3: Produce your findings based ONLY on code you actually read.
+
+      If you cannot find source code at REPO_PATH, report that as your only finding — do NOT fabricate a review.
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+
+      Review backend architecture within the scope above. Limit to 7 findings max.
+    max_retries: 2
+  - id: testing-review
+    agent: testing-strategist
+    timeout_minutes: 25
+    expects: 'SCORE:'
+    timeoutSeconds: 2400
+    input: |
+      TASK: {{ task }}
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      SCOPE: {{ scope }}
+      FOCUS_AREAS: {{ focus_areas }}
+      EXCLUDE: {{ exclude_patterns }}
+
+      CRITICAL INSTRUCTIONS:
+      {{ review_directive }}
+
+      STEP 1: cd into {{ repo_path }} and run: find . -name "*.test.*" -o -name "*.spec.*" -o -name "conftest.py" -o -name "pytest.ini" -o -name "vitest*" -o -name "jest*" | grep -v -E '{{ exclude_patterns }}' | head -30
+      STEP 2: Also run: find . -name "*.ts" -o -name "*.py" | grep -v -E '{{ exclude_patterns }}' | head -20 to assess test coverage gaps.
+      STEP 3: Produce your findings based ONLY on files you actually read (or confirmed missing).
+
+      If test files are missing, that IS a valid finding — report the absence with specific recommendations.
+      Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata.
+
+      Review testing strategy within the scope above. Limit to 7 findings max.
+    max_retries: 2
+  - id: consolidate
+    agent: consolidate
+    timeout_minutes: 30
+    expects: 'OVERALL_SCORE:'
+    timeoutSeconds: 2400
+    depends_on:
+      - code-quality-review
+      - security-audit
+      - backend-review
+      - testing-review
+    input: |
+      TASK: Consolidate all 4 review reports into a unified code review summary.
+
+      Parse each agent's output, rank issues by severity across all domains, and produce a prioritized action plan.
+
+      For any agent that reported 0/100 or N/A with no real findings, mark it as "INCOMPLETE — agent did not review source code" in the summary.
+
+      REVIEW OUTPUTS:
+      Code Quality: {{ steps.code-quality-review.summary }}
+      Security: {{ steps.security-audit.summary }}
+      Backend: {{ steps.backend-review.summary }}
+      Testing: {{ steps.testing-review.summary }}
+    max_retries: 2
+  - id: validate-consolidate
+    agent: consolidate
+    depends_on: [consolidate]
+    timeout_minutes: 5
+    expects: 'STATUS:'
+    input: |
+      Validate the prior compiler/consolidator output is present.
+
+      PRIOR_OUTPUT: {{ steps.consolidate.summary }}
+      REQUIRED_TOKEN: SCORE
+
+      If SCORE is found in the prior output, report STATUS: ok
+      If SCORE is not found, report STATUS: failed REASON: missing SCORE
+

@@ -144,3 +144,6 @@ Do NOT report those — they were already tracked. Only report issues that:
 2. Are present in the current state of changed files on {{ branch }}
 
 If you find an issue that looks like it was in the original findings, skip it.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

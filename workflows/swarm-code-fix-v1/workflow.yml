@@ -62,6 +62,8 @@ context:
   verify: "true"                    # v1.6: enabled — Issue #81 workaround: post-review receives only DOMAINS_INCLUDED + FILES_MODIFIED
   fix_directive: "Fix real issues found in {{ repo_path }}. Read files before editing. Exclude: {{ exclude_patterns }}. Do NOT fabricate fixes. Do NOT discuss the workflow pipeline."
 
+
+
 acceptance_criteria:
   - "Setup creates branch, confirms repo accessible, outputs shared-file map"
   - "All 10 fixer agents complete (partial ok — consolidator handles missing/deferred)"
@@ -726,6 +728,20 @@ steps:
       - For each changed domain: review only that domain's FILES_MODIFIED for NEW issues
       - Run {{ test_cmd }} to catch regressions across the combined changeset
       - Output VERIFY_STATUS: clean | issues-found with VERIFY_DOMAINS_CHECKED listing only active domains
+
+  - id: validate-post-review
+    agent: post-review
+    depends_on: [post-review]
+    timeout_minutes: 5
+    expects: 'STATUS:'
+    input: |
+      Validate the prior compiler/consolidator output is present.
+
+      PRIOR_OUTPUT: {{ steps.post-review.summary }}
+      REQUIRED_TOKEN: VERIFY_STATUS
+
+      If VERIFY_STATUS is found in the prior output, report STATUS: ok
+      If VERIFY_STATUS is not found, report STATUS: failed REASON: missing VERIFY_STATUS
 
 hooks:
   onSuccess:

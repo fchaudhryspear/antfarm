@@ -113,3 +113,6 @@ After `TECH_FEASIBILITY: complete`, output this JSON:
 ## Output Size
 
 Keep JSON under 3000 characters. Reference file paths, not file contents.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

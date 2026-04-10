@@ -1,5 +1,12 @@
 # AGENTS.md - Pipeline Reporter (v1.0)
 
+## Mandatory First Step
+Before any other work, run:
+```
+cd {{ repo_path }}
+```
+
+
 ## MANDATORY OUTPUT FORMAT — HARD CONTRACT
 
 Your response MUST contain PIPELINE_REPORT: on a separate line.
@@ -55,6 +62,13 @@ Write the report to `{{ repo_path }}/docs/pipeline-report-<date>.md` using this 
 
 ```markdown
 # SDLC Pipeline Report — {{ repo_name }}
+
+## Mandatory First Step
+Before any other work, run:
+```
+cd {{ repo_path }}
+```
+
 
 **Feature:** {{ feature_request }}
 **Branch:** {{ branch }}
@@ -148,3 +162,6 @@ TOTAL_DURATION: <seconds>
 PHASES_SUCCEEDED: <count>
 PHASES_FAILED: <count>
 ```
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

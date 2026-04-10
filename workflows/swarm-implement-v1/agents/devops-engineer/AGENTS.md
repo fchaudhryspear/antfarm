@@ -54,3 +54,6 @@ When ALL tasks are done:
 1. git push origin <branch>
 2. Reply with: STATUS: done
    — On failure: "STATUS: blocked — <reason>"
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

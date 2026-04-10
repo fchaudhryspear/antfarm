@@ -1,12 +1,45 @@
+id: smoke-test-v1
 name: smoke-test-v1
 version: "1.0"
 description: Post-merge smoke test gate for Flobase portal Lambda
+
+agents:
+  - id: smoke-deployer
+    name: Smoke Deployer
+    role: coding
+    workspace:
+      baseDir: agents/smoke-deployer
+      files:
+        AGENTS.md: agents/smoke-deployer/AGENTS.md
+    model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+  - id: smoke-tester
+    name: Smoke Tester
+    role: verification
+    workspace:
+      baseDir: agents/smoke-tester
+      files:
+        AGENTS.md: agents/smoke-tester/AGENTS.md
+    model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
+  - id: smoke-reverter
+    name: Smoke Reverter
+    role: pr
+    workspace:
+      baseDir: agents/smoke-reverter
+      files:
+        AGENTS.md: agents/smoke-reverter/AGENTS.md
+    model: ollama-cloud/minimax-m2.7:cloud
+    delivery:
+      channel: telegram
 
 # Usage:
 #   antfarm workflow run smoke-test-v1 "smoke test after PR #123"
 #
 # Context vars (override as needed):
-#   repo_path      - path to flobase repo (default: ~/dev/flobase-capital-platform)
+#   repo_path      - path to flobase repo (default: /Users/faisalshomemacmini/dev/flobase-capital-platform)
 #   stack_name     - staging CloudFormation stack (default: flobase-staging)
 #   function_name  - Lambda function name (default: flobase-api-handler-staging)
 #   aws_profile    - AWS CLI profile (default: security)
@@ -26,6 +59,7 @@ steps:
     delivery:
       channel: telegram
     timeout_minutes: 35
+    expects: "DEPLOY_STATUS:"
     input: |
       Deploy the staging Lambda function from {{ repo_path }}.
 
@@ -48,6 +82,7 @@ steps:
     name: Run 3 smoke tests
     agent: smoke-tester
     model: minimax-m2.7:cloud
+    expects: "SMOKE_PASS:"
     delivery:
       channel: telegram
     depends_on: [deploy]
@@ -85,6 +120,7 @@ steps:
     name: Create revert PR on failure
     agent: smoke-reverter
     model: minimax-m2.7:cloud
+    expects: "STATUS:"
     delivery:
       channel: telegram
     depends_on: [smoke-test]

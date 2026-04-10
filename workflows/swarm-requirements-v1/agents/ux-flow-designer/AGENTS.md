@@ -117,3 +117,6 @@ After `UX_FLOWS: complete`, output this JSON:
 ## Output Size
 
 Keep JSON under 4000 characters. Be specific on states, concise on descriptions.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

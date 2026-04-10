@@ -125,3 +125,6 @@ After `SECURITY_ANALYSIS: complete`, output this JSON:
 ## Output Size
 
 Keep JSON under 3000 characters. Be specific on requirements, concise on justification.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

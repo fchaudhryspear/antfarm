@@ -285,3 +285,6 @@ COMMITS_TOTAL: 8
 INTEGRATION_BUILD: passed
 VERIFY_STATUS: handled by post-review step (separate agent after this step)
 ```
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

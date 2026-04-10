@@ -46,3 +46,6 @@ Do NOT attempt to create it — escalate to human.
 - Don't spawn sub-agents.
 - Don't read files beyond what's needed to execute the build.
 - Report actual error messages, not summaries.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

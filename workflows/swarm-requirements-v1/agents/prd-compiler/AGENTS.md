@@ -186,3 +186,6 @@ A `needs-input` PRD is still valid and usable — downstream swarms can proceed 
 
 The PRD JSON can be large (up to 10,000 characters). The status output (PRD_STATUS etc.)
 should be under 200 characters.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

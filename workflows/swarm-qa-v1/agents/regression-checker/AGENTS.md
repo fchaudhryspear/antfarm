@@ -112,3 +112,6 @@ Before starting, verify:
 cd {{ repo_path }} && git remote -v
 ```
 The remote must contain `{{ repo_name }}`. If not, output `REGRESSION_STATUS: error` and STOP.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

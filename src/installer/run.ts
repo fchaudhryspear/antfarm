@@ -58,6 +58,26 @@ export async function runWorkflow(params: {
   focusAreas?: string;
   context?: Record<string, string>;
 }): Promise<{ id: string; runNumber: number; workflowId: string; task: string; status: string }> {
+  const gatewayStatusJson = await (async () => {
+    try {
+      const { execFileSync } = await import("node:child_process");
+      return execFileSync("openclaw", ["gateway", "status", "--json"], { encoding: "utf8" });
+    } catch {
+      return null;
+    }
+  })();
+
+  if (gatewayStatusJson) {
+    try {
+      const gatewayStatus = JSON.parse(gatewayStatusJson);
+      if (gatewayStatus?.deferredRestart === true) {
+        throw new Error("Gateway has deferred restart pending. Wait for restart to complete before dispatching workflows.");
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("deferred restart pending")) throw err;
+    }
+  }
+
   const workflowDir = resolveWorkflowDir(params.workflowId);
   const workflow = await loadWorkflowSpec(workflowDir);
   const db = getDb();

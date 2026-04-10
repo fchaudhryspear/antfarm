@@ -7,7 +7,8 @@
  * The full agent ID carries the workflow signal (review vs fix) — preserve it.
  * Fallback to 'review' is safer (less likely to false-reject).
  */
-export function getAgentSchema(agentId: string): "review" | "fix" | "consolidate" {
+export function getAgentSchema(agentId: string): "review" | "fix" | "consolidate" | "setup" {
+  if (agentId.includes("setup")) return "setup";
   if (agentId.includes("consolidate")) return "consolidate";
   if (agentId.includes("swarm-code-review")) return "review";
   if (agentId.includes("swarm-code-fix")) return "fix";
@@ -16,14 +17,15 @@ export function getAgentSchema(agentId: string): "review" | "fix" | "consolidate
 
 /**
  * Required output fields per schema.
- * review:  STATUS + SCORE + FINDINGS  (review / analysis agents)
+ * review:  SCORE + FINDINGS  (review / analysis agents)
  * fix:    STATUS + CHANGES + FILES_MODIFIED  (coding / fixer agents)
  * consolidate: STATUS + PR_URL  (PR/submission agents)
  */
 const SCHEMA_REQUIRED_FIELDS: Record<string, string[]> = {
-  review:      ["STATUS", "SCORE", "FINDINGS"],
+  review:      ["SCORE", "FINDINGS"],
   fix:         ["STATUS", "CHANGES", "FILES_MODIFIED"],
   consolidate: ["STATUS", "PR_URL"],
+  setup:       ["SETUP_OK"],
 };
 
 export type ValidationResult =
@@ -53,11 +55,8 @@ export function validateStepOutput(
 
   const missingFields = requiredFields.filter((field) => !presentKeys.has(field));
 
-  // For review schema: STATUS is optional when SCORE is present.
-  // The score IS the completion signal — agents reliably produce SCORE but often skip STATUS.
-  if (schema === "review" && missingFields.length === 1 && missingFields[0] === "STATUS" && presentKeys.has("SCORE")) {
-    return { valid: true };
-  }
+  // For review schema, the hard contract is SCORE + FINDINGS.
+  // CATEGORY and STATUS are not required for review agents.
   // For fix schema: STATUS is optional when CHANGES is present.
   if (schema === "fix" && missingFields.length === 1 && missingFields[0] === "STATUS" && presentKeys.has("CHANGES")) {
     return { valid: true };
@@ -80,8 +79,9 @@ export function validateStepOutput(
  */
 function stripMarkdown(output: string): string {
   return output
-    .replace(/```[\s\S]*?```/g, "") // remove fenced code blocks
+    .replace(/```(?:[a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g, "$1") // unwrap fenced code blocks but keep contents
     .replace(/^\s*`([^`]+)`\s*$/gm, "$1") // remove inline backtick wrappers
+    .replace(/^\s*\*\*([A-Za-z_]+):\*\*\s*/gm, "$1: ") // normalize bolded keys
     .trim();
 }
 

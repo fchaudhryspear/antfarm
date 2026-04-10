@@ -173,3 +173,12 @@ If you cannot produce a JSON owner map (e.g. freetext findings without IDs), out
 ```
 FINDING_OWNER_MAP: {}
 ```
+
+
+## STRICT OUTPUT ENFORCEMENT
+Your first line must be SETUP_OK: or SETUP_FAIL:.
+Do not put analysis, commentary, or markdown before it.
+If setup succeeds, always include SHARED_FILES: and FINDINGS_FORMAT:.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

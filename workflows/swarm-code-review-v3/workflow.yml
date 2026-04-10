@@ -21,6 +21,8 @@ context:
   # Exclude patterns applied in every agent's file discovery step:
   exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
   review_directive: "Analyze the actual source code in {{ repo_path }}. Read source files before producing findings. Do NOT fabricate reviews. Do NOT discuss the workflow, pipeline, agent infrastructure, or task metadata. Exclude: {{ exclude_patterns }}. Review mode: {{ review_mode }}. If review_mode=diff-only, ONLY review files changed between {{ diff_base }} and current branch (run: git diff --name-only {{ diff_base }}..HEAD). If review_mode=full, review the entire codebase."
+
+
 acceptance_criteria:
 - All 10 review agents complete in parallel
 - All 10 agents produce SCORE: and at least 1 finding from actual source code
@@ -28,7 +30,7 @@ acceptance_criteria:
 - Total runtime under 30 minutes
 - No sub-agent spawn failures (validated at install time)
 polling:
-  model: ollama-cloud/deepseek-v3.2:cloud
+  model: ollama-cloud/qwen3.5:397b-cloud
   delivery:
     channel: telegram
   timeoutSeconds: 3600
@@ -50,7 +52,7 @@ agents:
     baseDir: agents/security-auditor
     files:
       AGENTS.md: agents/security-auditor/AGENTS.md
-  model: ollama-cloud/deepseek-v3.2:cloud
+  model: ollama-cloud/devstral-2:123b-cloud
   delivery:
     channel: telegram
 - id: performance-engineer
@@ -80,7 +82,7 @@ agents:
     baseDir: agents/backend-architect
     files:
       AGENTS.md: agents/backend-architect/AGENTS.md
-  model: ollama-cloud/qwen3.5:397b-cloud
+  model: ollama-cloud/kimi-k2.5:cloud
   delivery:
     channel: telegram
 - id: frontend-architect
@@ -120,7 +122,7 @@ agents:
     baseDir: agents/testing-strategist
     files:
       AGENTS.md: agents/testing-strategist/AGENTS.md
-  model: ollama-cloud/glm-5:cloud
+  model: ollama-cloud/qwen3.5:397b-cloud
   delivery:
     channel: telegram
 - id: product-strategist
@@ -232,3 +234,18 @@ steps:
     - product-review
   input: "TASK: Consolidate all 10 review reports into a unified code review summary.\n\nParse each agent's output, rank issues by severity across all domains, and produce a prioritized action plan.\n\nFor any agent that reported 0/100 or N/A with no real findings, mark it as \"INCOMPLETE — agent did not review source code\" in the summary.\n\nREVIEW OUTPUTS:\nCode Quality: {{ steps.code-quality-review.summary }}\nSecurity: {{ steps.security-audit.summary }}\nPerformance: {{ steps.performance-review.summary }}\nUX: {{ steps.ux-review.summary }}\nBackend: {{ steps.backend-review.summary }}\nFrontend: {{ steps.frontend-review.summary }}\nDevOps: {{ steps.devops-review.summary }}\nDocs: {{ steps.docs-review.summary }}\nTesting: {{ steps.testing-review.summary }}\nProduct: {{ steps.product-review.summary }}\n"
   max_retries: 2
+
+- id: validate-consolidate
+  agent: consolidate
+  depends_on: [consolidate]
+  timeout_minutes: 5
+  expects: 'STATUS:'
+  input: |
+    Validate the prior compiler/consolidator output is present.
+
+    PRIOR_OUTPUT: {{ steps.consolidate.summary }}
+    REQUIRED_TOKEN: SCORE
+
+    If SCORE is found in the prior output, report STATUS: ok
+    If SCORE is not found, report STATUS: failed REASON: missing SCORE
+

@@ -1,5 +1,12 @@
 # AGENTS.md - Smoke Tester
 
+## Mandatory First Step
+Before any other work, run:
+```
+cd {{ repo_path }}
+```
+
+
 ## ⚠️ MANDATORY OUTPUT FORMAT — HARD CONTRACT
 
 YOUR RESPONSE MUST CONTAIN EXACTLY ONE OF:
@@ -61,3 +68,6 @@ cat /tmp/smoke_t3.json
 - Report which tests failed and why.
 - Don't spawn sub-agents.
 - Don't analyze code — just invoke and check status codes.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

@@ -128,3 +128,6 @@ git commit -m "docs(release): add deployment readiness report for <version>"
 ## Tool Call Limits
 - Maximum 10 file reads
 - Maximum 5 shell commands
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

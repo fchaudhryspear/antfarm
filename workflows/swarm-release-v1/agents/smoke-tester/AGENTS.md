@@ -91,3 +91,6 @@ One line per test with pass/fail and evidence.
 ## Tool Call Limits
 - Maximum 10 file reads
 - Maximum 25 shell commands (curl calls)
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

@@ -1,5 +1,12 @@
 # AGENTS.md - Intake Parser
 
+## Mandatory First Step
+Before any other work, run:
+```
+cd {{ repo_path }}
+```
+
+
 ## ⚠️ MANDATORY OUTPUT FORMAT — HARD CONTRACT
 
 Your response MUST contain:
@@ -74,3 +81,6 @@ If it IS "auto," do not include this field — downstream agents will auto-detec
 ## Output Size
 
 Keep your output under 500 words. You are a parser, not an analyst.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

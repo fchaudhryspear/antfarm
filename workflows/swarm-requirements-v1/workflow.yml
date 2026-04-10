@@ -21,6 +21,8 @@ context:
   target_users: "auto"   # Override target user segment
   exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
 
+
+
 acceptance_criteria:
   - "intake-parser extracts feature name, target users, business context"
   - "product-strategist produces user stories with acceptance criteria"
@@ -99,7 +101,7 @@ agents:
       baseDir: agents/prd-compiler
       files:
         AGENTS.md: agents/prd-compiler/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
 
@@ -255,6 +257,20 @@ steps:
       The final PRD JSON must contain all sections. Validate the JSON is parseable before finishing. After writing the JSON, re-read the file and confirm it parses correctly — if it doesn't, fix it.
 
       Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata. Exclude from all file operations: {{ exclude_patterns }}
+
+  - id: validate-compile-prd
+    agent: technical-feasibility
+    depends_on: [compile-prd]
+    timeout_minutes: 5
+    expects: 'STATUS:'
+    input: |
+      Validate the prior compiler/consolidator output is present.
+
+      PRIOR_OUTPUT: {{ steps.compile-prd.summary }}
+      REQUIRED_TOKEN: PRD_STATUS
+
+      If PRD_STATUS is found in the prior output, report STATUS: ok
+      If PRD_STATUS is not found, report STATUS: failed REASON: missing PRD_STATUS
 
 hooks:
   onSuccess:

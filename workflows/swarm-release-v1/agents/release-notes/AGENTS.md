@@ -112,3 +112,6 @@ git commit -m "docs(release): add release notes for <version>"
 ## Tool Call Limits
 - Maximum 15 file reads
 - Maximum 10 shell commands
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

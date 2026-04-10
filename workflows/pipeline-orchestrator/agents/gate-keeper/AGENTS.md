@@ -1,5 +1,12 @@
 # AGENTS.md - Gate Keeper (v1.0)
 
+## Mandatory First Step
+Before any other work, run:
+```
+cd {{ repo_path }}
+```
+
+
 ## MANDATORY OUTPUT FORMAT — HARD CONTRACT
 
 Your response MUST contain GATE_STATUS: on a separate line.
@@ -128,3 +135,6 @@ GATE_SUMMARY: <summary text, only if waiting>
 GATE_PHASE: <requirements | architecture>
 GATE_ARTIFACT: <path to artifact>
 ```
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

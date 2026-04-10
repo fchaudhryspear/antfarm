@@ -31,6 +31,22 @@ context_params:
   - name: prd_path
     required: true
     description: "Path to PRD JSON from swarm-requirements-v1"
+
+
+  - id: validate-compile-architecture
+    agent: system-architect
+    depends_on: [compile-architecture]
+    timeout_minutes: 5
+    expects: 'STATUS:'
+    input: |
+      Validate the prior compiler/consolidator output is present.
+
+      PRIOR_OUTPUT: {{ steps.compile-architecture.summary }}
+      REQUIRED_TOKEN: ARCH_STATUS
+
+      If ARCH_STATUS is found in the prior output, report STATUS: ok
+      If ARCH_STATUS is not found, report STATUS: failed REASON: missing ARCH_STATUS
+
 acceptance_criteria:
   - "arch-intake parses PRD, extracts all relevant sections for downstream agents"
   - "All 6 domain agents produce structured output with no empty fields"
@@ -504,6 +520,20 @@ steps:
           }
         }
         ARCHITECTURE_FILE_WRITTEN: <path>
+
+  - id: validate-architecture
+    agent: system-architect
+    depends_on: [compile-architecture]
+    timeout_minutes: 5
+    expects: 'STATUS:'
+    input: |
+      Validate the architecture compiler output is present.
+
+      PRIOR_OUTPUT: {{ steps.compile-architecture.summary }}
+      REQUIRED_TOKEN: ARCH_STATUS
+
+      If ARCH_STATUS is found in the prior output, report STATUS: ok
+      If ARCH_STATUS is not found, report STATUS: failed REASON: missing ARCH_STATUS
 
 hooks:
   onSuccess:

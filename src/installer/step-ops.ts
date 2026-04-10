@@ -781,6 +781,8 @@ export function getStepStatus(agentId: string): string {
 
   if (runningSteps.length === 0) return "none";
 
+  let staleResetCount = 0;
+
   // Check each running step — only block if actively producing output
   for (const step of runningSteps) {
     if (step.idle_ms < STALE_SESSION_THRESHOLD_MS) {
@@ -794,9 +796,14 @@ export function getStepStatus(agentId: string): string {
     ).run(step.id);
     logger.info(`Stale session detected: step "${step.step_id}" idle for ${Math.round(step.idle_ms / 1000)}s — reset to pending`, { runId: step.run_id, stepId: step.step_id });
     emitEvent({ ts: new Date().toISOString(), event: "step.pending", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Stale session reset: idle ${Math.round(step.idle_ms / 60000)}min` });
+    staleResetCount++;
   }
 
-  // All running steps were stale — safe to claim
+  // Pattern 2 fix: Distinguish "no work" from "stale step recovered" so
+  // the cron polling prompt can proceed to claim the newly-pending step.
+  if (staleResetCount > 0) {
+    return `reset-to-pending (${staleResetCount} stale step(s) recovered)`;
+  }
   return "none";
 }
 
@@ -1080,9 +1087,10 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     ).run(stepId);
     return { advanced: false, runCompleted: false };
   }
-  const hasValidMarker = output && (output.includes("SCORE:") || output.includes("PR_URL:"));
+  const validMarkers = ["SCORE:", "PR_URL:", "STATUS: skipped", "STATUS: complete", "STATUS: done", "STATUS: partial", "SETUP_OK:", "SETUP_FAIL:"];
+  const hasValidMarker = output && validMarkers.some((marker) => output.includes(marker));
   if (!isConsolidate && output && !hasValidMarker) {
-    logger.warn(`Step ${step.step_id} output missing valid completion marker (SCORE: or PR_URL:) — rejecting and resetting to pending`, { runId: step.run_id, stepId: step.step_id });
+    logger.warn(`Step ${step.step_id} output missing valid completion marker (${validMarkers.join(", ")}) — rejecting and resetting to pending`, { runId: step.run_id, stepId: step.step_id });
     db.prepare(
       "UPDATE steps SET status = 'pending', output = NULL, updated_at = datetime('now') WHERE id = ?"
     ).run(stepId);
@@ -1476,6 +1484,12 @@ export function triggerImmediateStepEnqueue(dispatchedAgentIds: string[], runId:
   const wfId = getWorkflowId(runId);
 
   for (const agentId of uniqueAgents) {
+    // Setup agents are intentionally handled by the normal cron path.
+    // Do NOT event-spawn them; setup must run inline to avoid duplicate ownership.
+    if (agentId.includes("_setup")) {
+      logger.info(`Event-driven enqueue skipped for setup agent ${agentId}; cron will handle inline`, { runId });
+      continue;
+    }
     // Fire-and-forget: claim step and spawn session in background
     // This runs async — if it fails, the regular cron will pick it up within 60s
     setImmediate(async () => {

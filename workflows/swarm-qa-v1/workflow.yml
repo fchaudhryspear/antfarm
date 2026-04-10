@@ -20,6 +20,8 @@ context:
   baseline_test_count: "" # From implementation phase
   exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
 
+
+
 acceptance_criteria:
   - "Acceptance validator checks each PRD user story against implementation"
   - "E2E tester writes and runs end-to-end tests for critical user flows"
@@ -42,7 +44,7 @@ agents:
       baseDir: agents/acceptance-validator
       files:
         AGENTS.md: agents/acceptance-validator/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
 
@@ -279,6 +281,20 @@ steps:
         REGRESSIONS: [list if any]
         GO_NO_GO: GO | NO-GO | CONDITIONAL
         BLOCKING_ISSUES: [list]
+
+  - id: validate-qa-compile
+    agent: qa-compiler
+    depends_on: [qa-compile]
+    timeout_minutes: 5
+    expects: 'STATUS:'
+    input: |
+      Validate the prior compiler/consolidator output is present.
+
+      PRIOR_OUTPUT: {{ steps.qa-compile.summary }}
+      REQUIRED_TOKEN: QA_STATUS
+
+      If QA_STATUS is found in the prior output, report STATUS: ok
+      If QA_STATUS is not found, report STATUS: failed REASON: missing QA_STATUS
 
 hooks:
   onSuccess:

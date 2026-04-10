@@ -107,3 +107,14 @@ FINDINGS:
 ## Termination
 
 **STOP after 12 findings.** Output the format above and complete the step. Do not continue analyzing once you have 12 issues.
+
+
+## MANDATORY FIRST STEP
+MANDATORY FIRST STEP:
+cd {{ repo_path }}
+pwd
+find . -name "*.py" -o -name "*.ts" | head -20
+If repo_path does not exist, report REPO_NOT_FOUND and stop. Do not fabricate findings.
+
+## GROUND TRUTH RULE
+GROUND TRUTH RULE: Only report findings from files you actually read. If you cannot find a file, say so. Never invent findings.

@@ -28,6 +28,7 @@ import { ensureCliSymlink } from "../installer/symlink.js";
 import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
 import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
 import { validateWorkflow } from "./validate.js";
+import { lintWorkflow } from "./workflow-lint.js";
 import { recoverCrons } from "./cron-recovery.js";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -96,6 +97,7 @@ function printUsage() {
       "antfarm workflow uninstall <name>    Uninstall a workflow (blocked if runs active)",
       "antfarm workflow uninstall --all     Uninstall all workflows (--force to override)",
       "antfarm workflow validate <name>     Validate workflow.yml output contracts (preflight check)",
+      "antfarm workflow lint <name>         Lint workflow + agent prompts for path/model/template issues",
       "antfarm workflow run <name> <task>   Start a workflow run",
       "antfarm workflow status <query>      Check run status (task substring, run ID prefix)",
       "antfarm workflow runs                List all workflow runs",
@@ -527,6 +529,20 @@ async function main() {
     return;
   }
 
+  if (action === "lint") {
+    if (!target) { process.stderr.write("Missing workflow-id.\n"); printUsage(); process.exit(1); }
+    const result = await lintWorkflow(target);
+    console.log(result.workflowId);
+    for (const issue of result.issues) {
+      console.log(` ✗ ${issue.file}${issue.line ? ':' + issue.line : ''} ${issue.ruleId} ${issue.message}`);
+    }
+    for (const warn of result.warnings) {
+      console.log(` ! ${warn.file}${warn.line ? ':' + warn.line : ''} ${warn.ruleId} ${warn.message}`);
+    }
+    console.log(`\n${result.issues.length} errors, ${result.warnings.length} warnings`);
+    process.exit(result.ok ? 0 : 1);
+  }
+
   if (action === "validate") {
     if (!target) { process.stderr.write("Missing workflow-id.\n"); printUsage(); process.exit(1); }
     const result = await validateWorkflow(target);
@@ -556,17 +572,31 @@ async function main() {
   if (!target) { printUsage(); process.exit(1); }
 
   if (action === "install") {
-    // Preflight validation — warning only, don't block install
+    const lintResult = await lintWorkflow(target);
+    if (!lintResult.ok) {
+      process.stderr.write(`❌ Cannot install: workflow "${target}" failed lint with ${lintResult.issues.length} error(s)\n`);
+      for (const issue of lintResult.issues) {
+        process.stderr.write(`   [${issue.ruleId}] ${issue.file}${issue.line ? ':' + issue.line : ''} ${issue.message}\n`);
+      }
+      if (lintResult.warnings.length > 0) {
+        process.stderr.write(`\nWarnings:\n`);
+        for (const warn of lintResult.warnings) {
+          process.stderr.write(`   [${warn.ruleId}] ${warn.file}${warn.line ? ':' + warn.line : ''} ${warn.message}\n`);
+        }
+      }
+      process.exit(1);
+    }
+
     const validateResult = await validateWorkflow(target);
     if (!validateResult.valid) {
-      process.stderr.write(`⚠️  Workflow "${target}" has output contract errors (installing anyway)\n`);
+      process.stderr.write(`❌ Cannot install: workflow "${target}" has output contract errors\n`);
       for (const err of validateResult.errors) {
         process.stderr.write(`   [${err.step}] ${err.message}\n`);
         if (err.suggestion) process.stderr.write(`      💡 ${err.suggestion}\n`);
       }
-      process.stderr.write(`\nRuns will fail until these are fixed. Use "antfarm workflow validate ${target}" to re-check.\n\n`);
-    } else if (validateResult.warnings.length > 0) {
-      process.stdout.write(`⚠️  Workflow "${target}" has ${validateResult.warnings.length} warning(s)\n\n`);
+      process.exit(1);
+    } else if (lintResult.warnings.length > 0 || validateResult.warnings.length > 0) {
+      process.stdout.write(`⚠️  Workflow "${target}" has ${lintResult.warnings.length + validateResult.warnings.length} warning(s)\n\n`);
     }
 
     const result = await installWorkflow({ workflowId: target });

@@ -82,3 +82,6 @@ Include specific artifact paths, deployment URL if available, and any errors enc
 ## Tool Call Limits
 - Maximum 15 file reads
 - Maximum 20 shell commands (builds need multiple steps)
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

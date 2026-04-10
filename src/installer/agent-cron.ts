@@ -1,4 +1,4 @@
-import { createAgentCronJob, deleteAgentCronJobs, listCronJobs, checkCronToolAvailable } from "./gateway-api.js";
+import { createAgentCronJob, deleteAgentCronJobs, listCronJobs, checkCronToolAvailable, deleteCronJob } from "./gateway-api.js";
 import type { WorkflowSpec } from "./types.js";
 import { resolveAntfarmCli } from "./paths.js";
 import { getDb } from "../db.js";
@@ -12,6 +12,8 @@ const log = {
 };
 
 const DEFAULT_EVERY_MS = 60_000; // 1 minute — v4 fix (was 300_000)
+const CRON_RETRY_DELAYS_MS = [1000, 3000, 8000];
+const PREFLIGHT_CRON_PREFIX = "_preflight_cron_smoke_";
 
 /**
  * Bug #23 fix: Check DB step status before claiming.
@@ -30,9 +32,53 @@ If output contains "running" or "done", reply HEARTBEAT_OK and stop. Do NOT call
 }
 const DEFAULT_AGENT_TIMEOUT_SECONDS = 30 * 60; // 30 minutes
 
+function buildOutputContractPrompt(workflowId: string, agentId: string): string {
+  const isSetup = agentId.includes("setup");
+  const isFixer = !isSetup && (agentId.includes("fix") || workflowId.includes("fix"));
+  if (isSetup) {
+    return `Your output MUST start with these exact fields on the first lines:
+SETUP_OK: branch=[branch] repo=[repo_path]
+SHARED_FILES: [list with domain annotations, or none]
+FINDINGS_FORMAT: json | freetext
+FINDING_OWNER_MAP: { ... } or {}
+DOMAIN_ROUTING: [only if json]
+
+If setup cannot proceed, output:
+SETUP_FAIL: [reason]
+
+NEVER output analysis before SETUP_OK or SETUP_FAIL.`;
+  }
+  if (isFixer) {
+    return `Your output MUST start with these exact four fields on the first lines:
+STATUS: complete | skipped | partial
+CHANGES: [description of what you changed, or "no changes needed", or "already addressed in <commit>"]
+FILES_MODIFIED: [comma-separated list of files, or none]
+PR_OPENED: [PR URL, pending, or none]
+
+NEVER output only STATUS. NEVER omit CHANGES or FILES_MODIFIED.
+
+Example (completed fix):
+STATUS: complete
+CHANGES: Fixed thread-safety issue in shared client initialization and added tests
+FILES_MODIFIED: backend/lambdas/shared/python/shared/db_connection.py, tests/unit/test_db_connection.py
+PR_OPENED: pending
+
+Example (already fixed):
+STATUS: skipped
+CHANGES: already addressed in 9ae77f2
+FILES_MODIFIED: none
+PR_OPENED: none`;
+  }
+  return `Your output MUST start with:
+SCORE: [number]/100
+FINDINGS: [number of findings]`;
+}
+
 function buildAgentPrompt(workflowId: string, agentId: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
   const cli = resolveAntfarmCli();
+  const outputContract = buildOutputContractPrompt(workflowId, agentId);
+  const isSetup = agentId.includes("setup");
 
   return `You are an Antfarm workflow agent. Check for pending work and execute it.
 
@@ -48,17 +94,16 @@ If output is "NO_WORK", reply HEARTBEAT_OK and stop.
 Step 2 — If JSON is returned, it contains: {"stepId": "...", "runId": "...", "input": "..."}
 Save the stepId — you'll need it to report completion.
 The "input" field contains your FULLY RESOLVED task instructions. Read it carefully and DO the work.
+${isSetup ? 'IMPORTANT: Do the setup work INLINE in this session. Do NOT spawn a sub-agent for setup.' : ''}
 
 Step 3 — Do the work described in the input. Format your output with KEY: value lines as specified.
 
 Step 4 — MANDATORY: Report completion (do this IMMEDIATELY after finishing the work).
-Your output MUST start with SCORE: on the first line. Read your AGENTS.md for the required format.
+${outputContract}
+Read your AGENTS.md for the required format.
 \`\`\`
 cat <<'ANTFARM_EOF' > /tmp/antfarm-step-output.txt
-SCORE: [your score]/100
-FINDINGS: [number of findings]
-
-[your findings here]
+[structured output matching the required contract]
 ANTFARM_EOF
 cat /tmp/antfarm-step-output.txt | node ${cli} step complete "<stepId>"
 \`\`\`
@@ -87,6 +132,7 @@ The workflow cannot advance until you report. Your session ending without report
 export function buildWorkPrompt(workflowId: string, agentId: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
   const cli = resolveAntfarmCli();
+  const outputContract = buildOutputContractPrompt(workflowId, agentId);
 
   return `You are an Antfarm workflow agent. Execute the pending work below.
 
@@ -99,13 +145,11 @@ The "input" field contains your FULLY RESOLVED task instructions. Read it carefu
 Do the work described in the input. Format your output with KEY: value lines as specified.
 
 MANDATORY: Report completion (do this IMMEDIATELY after finishing the work).
-Your output MUST start with SCORE: on the first line. Read your AGENTS.md for the required format.
+${outputContract}
+Read your AGENTS.md for the required format.
 \`\`\`
 cat <<'ANTFARM_EOF' > /tmp/antfarm-step-output.txt
-SCORE: [your score]/100
-FINDINGS: [number of findings]
-
-[your findings here]
+[structured output matching the required contract]
 ANTFARM_EOF
 cat /tmp/antfarm-step-output.txt | node ${cli} step complete "<stepId>"
 \`\`\`
@@ -174,28 +218,48 @@ export function buildPollingPrompt(workflowId: string, agentId: string, workMode
   const cli = resolveAntfarmCli();
   const model = workModel ?? "default";
   const workPrompt = buildWorkPrompt(workflowId, agentId);
+  const isSetup = agentId.includes("setup");
 
   return `Step 1 — Quick check for pending work (lightweight, no side effects):
 \`\`\`
 node ${cli} step peek "${fullAgentId}"
 \`\`\`
-If output is "NO_WORK", reply HEARTBEAT_OK and stop immediately. Do NOT run step claim.
+If output is "HAS_WORK", skip to Step 3.
+If output is "NO_WORK", continue to Step 2 (stale session recovery).
 
-Step 2 — Claim the step ONLY if peek returned HAS_WORK:
+Step 2 — Stale session recovery (Pattern 2 fix: prevents cron reclaim deadlock):
+When peek returns NO_WORK, a step may still be stuck in 'running' with an orphaned session.
+Run status check to trigger automatic stale detection and reset:
 \`\`\`
 node ${cli} step status "${fullAgentId}"
 \`\`\`
-If output is "running", reply HEARTBEAT_OK and stop. Do NOT call step claim. This prevents double-claiming when two cron ticks fire simultaneously.
-If output is "none", proceed to Step 3.
+If output is "none" → no work at all. Reply HEARTBEAT_OK and stop.
+If output is "running" → step is actively being worked. Reply HEARTBEAT_OK and stop.
+If output contains "reset" or "pending" → a stale step was recovered! Go to Step 3 to claim it.
 
-Step 3 — If status check returned "none", claim the step:
+Step 3 — Pre-claim guard (prevents double-claiming when two cron ticks overlap):
+\`\`\`
+node ${cli} step status "${fullAgentId}"
+\`\`\`
+If output is "running", reply HEARTBEAT_OK and stop. Do NOT call step claim.
+If output is "none", proceed to Step 4.
+
+Step 4 — Claim the step:
 \`\`\`
 node ${cli} step claim "${fullAgentId}"
 \`\`\`
 If output is "NO_WORK", reply HEARTBEAT_OK and stop.
 
 If JSON is returned, parse it to extract stepId, runId, and input fields.
-Then call sessions_spawn with these parameters:
+${isSetup ? `For setup agents: DO NOT call sessions_spawn. Execute the claimed setup work INLINE in this same session using the work prompt below, then call step complete yourself.
+
+---START WORK PROMPT---
+${workPrompt}
+---END WORK PROMPT---
+
+When finished, either:
+- call step complete with SETUP_OK... output, or
+- call step fail only for unrecoverable setup errors.` : `Then call sessions_spawn with these parameters:
 - agentId: "${fullAgentId}"
 - model: "${model}"
 - task: The full work prompt below, followed by "\\n\\nCLAIMED STEP JSON:\\n" and the exact JSON output from step claim.
@@ -205,7 +269,7 @@ Full work prompt to include in the spawned task:
 ${workPrompt}
 ---END WORK PROMPT---
 
-Reply with a short summary of what you spawned.`;
+Reply with a short summary of what you spawned.`}`;
 }
 
 export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
@@ -231,7 +295,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
     const prompt = buildPollingPrompt(workflow.id, agent.id, workModel);
     const timeoutSeconds = workflowPollingTimeout;
 
-    const result = await createAgentCronJob({
+    await createAgentCronWithBackoff({
       name: cronName,
       schedule: { kind: "every", everyMs, anchorMs },
       sessionTarget: "isolated",
@@ -239,11 +303,7 @@ export async function setupAgentCrons(workflow: WorkflowSpec): Promise<void> {
       payload: { kind: "agentTurn", message: prompt, model: pollingModel, timeoutSeconds },
       delivery: { mode: "none" },
       enabled: true,
-    });
-
-    if (!result.ok) {
-      throw new Error(`Failed to create cron job for agent "${agent.id}": ${result.error}`);
-    }
+    }, `Failed to create cron job for agent "${agent.id}"`);
   }
 }
 
@@ -286,6 +346,63 @@ async function getExistingWorkflowCronJobs(workflowId: string): Promise<Map<stri
  * v5: Full reconciliation — missing crons get created, stale crons get updated.
  * Detects model drift by comparing cron model vs workflow polling model.
  */
+async function sleep(ms: number): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function verifyCronReadiness(): Promise<void> {
+  const testJobName = `${PREFLIGHT_CRON_PREFIX}${Date.now()}`;
+  const testAgentId = "antfarm_preflight_smoke";
+  let createdJobId: string | undefined;
+
+  const createResult = await createAgentCronJob({
+    name: testJobName,
+    schedule: { kind: "every", everyMs: 31 * 24 * 60 * 60 * 1000, anchorMs: 0 },
+    sessionTarget: "isolated",
+    agentId: testAgentId,
+    payload: { kind: "agentTurn", message: "HEARTBEAT_OK", timeoutSeconds: 30 },
+    delivery: { mode: "none" },
+    enabled: false,
+  });
+
+  if (!createResult.ok) {
+    throw new Error(`Cron subsystem not ready: ${createResult.error ?? "create failed"}`);
+  }
+
+  createdJobId = createResult.id;
+
+  if (!createdJobId) {
+    const jobs = await listCronJobs();
+    if (jobs.ok && jobs.jobs) {
+      createdJobId = jobs.jobs.find(job => job.name === testJobName)?.id;
+    }
+  }
+
+  if (createdJobId) {
+    const deleteResult = await deleteCronJob(createdJobId);
+    if (!deleteResult.ok) {
+      log.warn(`Preflight cron cleanup failed for ${testJobName}: ${deleteResult.error ?? "unknown error"}`);
+    }
+  } else {
+    log.warn(`Preflight cron cleanup skipped, could not resolve id for ${testJobName}`);
+  }
+}
+
+async function createAgentCronWithBackoff(job: Parameters<typeof createAgentCronJob>[0], failureMessage: string): Promise<void> {
+  let lastError = "unknown error";
+  for (let attempt = 0; attempt <= CRON_RETRY_DELAYS_MS.length; attempt++) {
+    const result = await createAgentCronJob(job);
+    if (result.ok) return;
+    lastError = result.error ?? lastError;
+    if (attempt < CRON_RETRY_DELAYS_MS.length) {
+      const delay = CRON_RETRY_DELAYS_MS[attempt];
+      log.debug(`${failureMessage} attempt ${attempt + 1} failed, retrying in ${delay}ms`, { error: lastError, cronName: job.name });
+      await sleep(delay);
+    }
+  }
+  throw new Error(`${failureMessage}: ${lastError}`);
+}
+
 export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void> {
   const existingCrons = await getExistingWorkflowCronJobs(workflow.id);
   const agents = workflow.agents;
@@ -293,16 +410,21 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
   const workflowPollingModel = workflow.polling?.model ?? DEFAULT_POLLING_MODEL;
   const workflowPollingTimeout = workflow.polling?.timeoutSeconds ?? DEFAULT_POLLING_TIMEOUT_SECONDS;
 
-  // Preflight: verify cron tool is accessible before attempting to create/update jobs.
-  // Retry up to 3 times with backoff to handle post-restart gateway instability where
-  // /health passes but the cron tool isn't yet initialized.
   let preflight: { ok: boolean; error?: string } = { ok: false, error: "preflight not attempted" };
   for (let attempt = 0; attempt < 3; attempt++) {
     preflight = await checkCronToolAvailable();
-    if (preflight.ok) break;
+    if (preflight.ok) {
+      try {
+        await verifyCronReadiness();
+        break;
+      } catch (err) {
+        preflight = { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
     if (attempt < 2) {
-      log.debug(`Cron preflight attempt ${attempt + 1} failed for "${workflow.id}", retrying in ${(attempt + 1) * 2}s...`);
-      await new Promise(r => setTimeout(r, (attempt + 1) * 2000));
+      const delay = CRON_RETRY_DELAYS_MS[Math.min(attempt, CRON_RETRY_DELAYS_MS.length - 1)];
+      log.debug(`Cron preflight attempt ${attempt + 1} failed for "${workflow.id}", retrying in ${delay}ms...`, { error: preflight.error });
+      await sleep(delay);
     }
   }
   if (!preflight.ok) {
@@ -337,7 +459,7 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
 
     if (!existing) {
       // Missing — create it
-      const result = await createAgentCronJob({
+      await createAgentCronWithBackoff({
         name: cronName,
         schedule: { kind: "every", everyMs, anchorMs },
         sessionTarget: "isolated",
@@ -345,10 +467,7 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
         payload: { kind: "agentTurn", message: prompt, model: pollingModel, timeoutSeconds },
         delivery: { mode: "none" },
         enabled: true,
-      });
-      if (!result.ok) {
-        throw new Error(`Failed to create cron job for agent "${agent.id}": ${result.error}`);
-      }
+      }, `Failed to create cron job for agent "${agent.id}"`);
       log.debug(`Created missing cron for agent "${agent.id}"`, { workflowId: workflow.id, cronName });
     } else {
       // Exists — check for model OR delivery drift
@@ -359,7 +478,7 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
         // Model drift — delete and recreate with correct model
         log.debug(`Drift detected for "${agent.id}": model=${cronModel}->${pollingModel} delivery=${cronDelivery}->none.`, { workflowId: workflow.id, cronName });
         await deleteAgentCronJobs(cronName);
-        const result = await createAgentCronJob({
+        await createAgentCronWithBackoff({
           name: cronName,
           schedule: { kind: "every", everyMs, anchorMs },
           sessionTarget: "isolated",
@@ -367,10 +486,7 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
           payload: { kind: "agentTurn", message: prompt, model: pollingModel, timeoutSeconds },
           delivery: { mode: "none" },
           enabled: true,
-        });
-        if (!result.ok) {
-          throw new Error(`Failed to recreate cron job for agent "${agent.id}": ${result.error}`);
-        }
+        }, `Failed to recreate cron job for agent "${agent.id}"`);
         log.debug(`Recreated stale cron for agent "${agent.id}"`, { workflowId: workflow.id, cronName });
       }
     }

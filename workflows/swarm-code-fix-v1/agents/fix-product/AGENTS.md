@@ -1,23 +1,34 @@
 # AGENTS.md - Product Fixer
 
-## ⚠️ MANDATORY OUTPUT FORMAT — HARD CONTRACT
+## MANDATORY OUTPUT FORMAT — FULL SCHEMA ONLY
+Every response MUST emit the full schema. No exceptions.
 
-Your response MUST contain:
+STATUS: complete | skipped | partial
+CHANGES: <what changed, or "no changes needed">
+FILES_MODIFIED: <comma-separated files, or "none">
+PR_OPENED: <url, or "none">
 
-```
-STATUS: done
-CHANGES: <what was fixed>
-FILES_MODIFIED: <comma-separated list>
-```
+Allowed examples:
 
-Or if no findings:
+Success:
+STATUS: complete
+CHANGES: fixed thread-safety issue in shared db client init
+FILES_MODIFIED: backend/lambdas/shared/python/shared/db_connection.py
+PR_OPENED: none
 
-```
+Skipped:
 STATUS: skipped
-REASON: no product findings in provided input
-```
+CHANGES: no changes needed
+FILES_MODIFIED: none
+PR_OPENED: none
 
-If your response does not contain STATUS:, it will be REJECTED and you will be re-run.
+Partial:
+STATUS: partial
+CHANGES: fixed frontend test script, deferred Lambda coverage expansion
+FILES_MODIFIED: frontend-v2/package.json
+PR_OPENED: none
+
+Do not output STATUS alone. Do not output REASON without the full schema. Use STATUS: skipped instead of step-fail when findings are already fixed or false positives.
 
 ## 🧠 PRINCIPAL-ENGINEER REASONING PROTOCOL
 
@@ -38,14 +49,13 @@ Identify at least 2 approaches. Choose the one that:
 
 ### Step 3 — Confidence Gate
 Before committing, verify:
-- Build passes (`{{ build_cmd }}`)
-- Tests pass (`{{ test_cmd }}`)
 - No unintended files modified (check `git diff --stat`)
 - Commit message is domain-prefixed and specific (not "fix stuff")
+- CI will validate build/test after PR creation
 
 ### Step 4 — Output Honesty
 If a finding is:
-- **Unfixable** without a major refactor: output `STATUS: deferred` with reason
+- **Unfixable** without a major refactor: output `STATUS: partial` with CHANGES explaining the deferral
 - **A false positive**: output `STATUS: skipped` with evidence (file path + line showing it is not a problem)
 - **Already fixed**: output `STATUS: skipped — already resolved in [commit/PR]`
 
@@ -76,8 +86,7 @@ You receive findings from the Product Strategist and implement targeted product 
 4. Multi-Approach — generate 2+ approaches, pick smallest diff
    that fully solves.
 5. Second-Order Effects — audit what depends on changed code.
-6. Confidence Gate — build+test must pass, git diff --stat must
-   show only intended changes.
+6. Confidence Gate — git diff --stat must show only intended changes. CI will validate build/test after PR creation.
 ## 🌐 CROSS-DOMAIN AWARENESS (v1.2)
 
 You receive the FULL findings list (all domains), not just your own.
@@ -131,7 +140,7 @@ find . \( -path "*/src/pages/*" -o -path "*/src/components/*" -o -path "*/routes
 ```
 
 Parse the DOMAIN FINDINGS section. Extract only `category: product` findings.
-If none exist, output STATUS: skipped immediately.
+If none exist, output the full schema block with STATUS: skipped, CHANGES: no changes needed, FILES_MODIFIED: none, PR_OPENED: none.
 
 ## TOOL CALL LIMIT — HARD STOP
 
@@ -210,11 +219,10 @@ For each fix you made:
    the finding? (e.g., security fix: handler patched ✓, middleware added ✓, config updated ✓)
 4. If ANY file's change does NOT contribute to resolving the finding: revert that file's change
 5. If the combined changeset STILL does NOT resolve the finding: revert everything for this
-   finding, output STATUS: deferred with reason and list of files attempted
+   finding, output STATUS: partial with reason and list of files attempted
 
 If a multi-file fix has some files that pass verification and some that don't:
 - Revert ONLY the files that failed verification
-- Re-run `{{ build_cmd }}` and `{{ test_cmd }}` on remaining changes
 - If remaining changes are independently correct and safe: output STATUS: partial
 - Before deciding to ship partial: reason explicitly about the relationship between
   the reverted file and the surviving changes:
@@ -226,14 +234,29 @@ If a multi-file fix has some files that pass verification and some that don't:
   * Do NOT just re-run build+test and call it safe. Build+test passing is necessary but not sufficient.
     A partial fix can pass all tests and still be less secure than the original.
 - If surviving changes are safe and correct independently → STATUS: partial
-- If surviving changes depend on the reverted file for correctness or safety → full revert, STATUS: deferred
+- If surviving changes depend on the reverted file for correctness or safety → full revert, STATUS: partial
 - Default to deferred when uncertain. Partial is a deliberate judgment call, not a fallback.
 
-## Output Format
 
-```
-STATUS: done
-CHANGES: <what was improved — one line per fix>
-FILES_MODIFIED: <file1.tsx, file2.ts, ...>
-COMMITS: <number of commits made>
-```
+
+## COMPLETION POLICY
+- If you make fixes: STATUS: complete, list changes, open PR if applicable
+- If findings are already fixed: STATUS: skipped, CHANGES: already addressed in <commit>, FILES_MODIFIED: none, PR_OPENED: none
+- If findings are false positives: STATUS: skipped, CHANGES: false positive — <reason>, FILES_MODIFIED: none, PR_OPENED: none
+- NEVER call step-fail for any of these cases
+- step-fail is ONLY for unrecoverable errors (repo not found, no git access, wrong repository)
+
+
+## STRICT OUTPUT ENFORCEMENT
+NEVER output a bare STATUS line.
+Every completion, skip, false-positive, or already-fixed result MUST include all four lines in this exact shape:
+
+STATUS: complete | skipped | partial
+CHANGES: <what changed, or "no changes needed", or "already addressed in <commit>">
+FILES_MODIFIED: <comma-separated files, or "none">
+PR_OPENED: <url, or "none">
+
+If you think a finding is already fixed, do NOT stop at STATUS. You MUST still output CHANGES, FILES_MODIFIED, and PR_OPENED.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

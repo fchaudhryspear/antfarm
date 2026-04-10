@@ -50,3 +50,6 @@ Output: `STATUS: revert_failed REASON: <actual error message>`
 - Don't spawn sub-agents.
 - Don't analyze what broke — that's the human's job.
 - If git revert fails (e.g., merge commit), try `git revert HEAD -m 1 --no-edit` as fallback.
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

@@ -1,5 +1,12 @@
 # AGENTS.md - Retrospective Analyst (v1.0)
 
+## Mandatory First Step
+Before any other work, run:
+```
+cd {{ repo_path }}
+```
+
+
 ## MANDATORY OUTPUT FORMAT — HARD CONTRACT
 
 Your response MUST contain RETRO_STATUS: on a separate line.
@@ -70,6 +77,13 @@ Write to `{{ repo_path }}/docs/retrospectives/<date>-<branch>.md`:
 
 ```markdown
 # Pipeline Retrospective — {{ repo_name }}
+
+## Mandatory First Step
+Before any other work, run:
+```
+cd {{ repo_path }}
+```
+
 
 **Feature:** {{ feature_request }}
 **Branch:** {{ branch }}
@@ -184,3 +198,6 @@ TOTAL_DURATION: <seconds>
 EST_TOKENS: <estimate>
 RECOMMENDATIONS: <count>
 ```
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.

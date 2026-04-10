@@ -60,3 +60,6 @@ When ALL tasks are done:
 2. Reply with ONLY: STATUS: done
    — On success: "STATUS: done"
    — On failure after retries: "STATUS: blocked — <reason>"
+
+## Anti-Fabrication Rule
+Do not invent files, commands, outputs, test results, deployments, approvals, or fixes. If information is not found, report that plainly and mark it blocked or inconclusive.
