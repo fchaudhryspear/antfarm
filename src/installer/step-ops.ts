@@ -16,7 +16,7 @@ import { resolveWorkflowDir } from "./paths.js";
 import { isFrontendChange } from "../lib/frontend-detect.js";
 import { ping as heartbeatPing, clearSession as heartbeatClear } from "../heartbeat-service.js";
 import type { WorkflowStepFailure } from "./types.js";
-import { validateStepOutput } from "../validate-step-output.js";
+import { validateStepOutput, validateContractAndDispatch } from "../validate-step-output.js";
 import { validateConsolidateInputs } from "../validate-consolidate-inputs.js";
 import { recordAgentRun, recordAgentRetry, getAgentStats } from "../agent-retry-stats.js";
 
@@ -1061,8 +1061,8 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   const db = getDb();
 
   const step = db.prepare(
-    "SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id FROM steps WHERE id = ?"
-  ).get(stepId) as { id: string; run_id: string; step_id: string; step_index: number; type: string; loop_config: string | null; current_story_id: string | null } | undefined;
+    "SELECT id, run_id, step_id, step_index, type, loop_config, current_story_id, expects FROM steps WHERE id = ?"
+  ).get(stepId) as { id: string; run_id: string; step_id: string; step_index: number; type: string; loop_config: string | null; current_story_id: string | null; expects: string } | undefined;
 
   if (!step) throw new Error(`Step not found: ${stepId}`);
 
@@ -1113,6 +1113,29 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
       escalateStepModel(stepId);
       return { advanced: false, runCompleted: false };
     }
+  }
+
+  // Runtime contract enforcement: validate expects + SWARM_STATUS gating
+  // Check that step output satisfies its declared expects contract before marking done
+  const contractResult = validateContractAndDispatch(output, step.expects, step.step_id.includes("dispatch"));
+  if (!contractResult.valid) {
+    const retryRow = db.prepare("SELECT retry_count, max_retries FROM steps WHERE id = ?").get(stepId) as { retry_count: number; max_retries: number };
+    const newRetry = retryRow.retry_count + 1;
+    logger.warn(`Runtime contract validation failed for step ${step.step_id}: ${contractResult.reason} (retry ${newRetry}/${retryRow.max_retries})`, { runId: step.run_id, stepId: step.step_id });
+    emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Contract validation failed: ${contractResult.reason}` });
+    if (newRetry > retryRow.max_retries) {
+      // Retries exhausted — fail step and run
+      db.prepare("UPDATE steps SET status = 'failed', output = ?, retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(`Contract validation failed: ${contractResult.reason}`, newRetry, stepId);
+      db.prepare("UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?").run(step.run_id);
+      emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), detail: `Contract validation retries exhausted for ${step.step_id}` });
+      cancelAllSiblingSteps(step.run_id, stepId); // Fix #1
+      scheduleRunCronTeardown(step.run_id);
+      return { advanced: false, runCompleted: false };
+    }
+    // Auto-retry: reset to pending with incremented retry count + model escalation
+    db.prepare("UPDATE steps SET status = 'pending', output = NULL, retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(newRetry, stepId);
+    escalateStepModel(stepId);
+    return { advanced: false, runCompleted: false };
   }
 
   // Issue #340: Consolidate-PR input validation — check all prior step outputs
