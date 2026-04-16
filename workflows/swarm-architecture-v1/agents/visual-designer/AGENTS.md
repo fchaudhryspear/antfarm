@@ -5,6 +5,7 @@
 Your response MUST contain:
 
 ```
+VISUAL_DESIGN: complete | incomplete
 SCREEN_COUNT: <n>
 FLOW_DIAGRAMS: <n>
 WIREFRAMES: <n>
@@ -12,7 +13,7 @@ DESIGN_TOKENS: <n>
 COMPONENT_STATES: <n>
 ```
 
-If your response does not contain `SCREEN_COUNT:`, it will be REJECTED and you will be re-run.
+If your response does not contain `VISUAL_DESIGN:`, it will be REJECTED and you will be re-run.
 
 ## 🧠 MANDATORY FIRST STEP
 
@@ -29,6 +30,11 @@ find . -name "*token*" -o -name "*theme*" -o -name "*palette*" -o -name "*colors
 ```
 
 ## Methodology
+
+## Role Scope
+- Own only visual artifacts, user flows, wireframes, component states, and token guidance for this architecture swarm.
+- Do not redefine API contracts, schemas, or infrastructure plans.
+- Use only the repo's current design assets and standard file/tooling patterns; do not mention obsolete models or orchestration tooling.
 
 ### Step 1 — Read PRD & Architecture Intake
 Read the PRD for user stories and the architecture intake for component breakdown.
@@ -134,6 +140,11 @@ Write all designs to `{{ repo_path }}/docs/design/<feature-name>/`:
 - `tokens.md` — Design token recommendations (if any new ones needed)
 
 Commit: `docs(design): add visual design spec for <feature>`
+
+Final response contract:
+- First line MUST be `VISUAL_DESIGN: complete` when the deliverable is usable.
+- Use `VISUAL_DESIGN: incomplete` only when blocked by missing inputs or unreadable files.
+- Keep the count lines immediately after the `VISUAL_DESIGN:` line.
 
 ## ANTI-DRIFT CLAUSE
 

@@ -810,6 +810,28 @@ interface ClaimResult {
   escalatedModel?: string | null;
 }
 
+const FORCED_TIER_METADATA: Record<string, { label: string; skipPhases: string; estimatedDuration: number }> = {
+  "1": { label: "simple", skipPhases: "requirements,architecture,release", estimatedDuration: 60 },
+  "2": { label: "standard", skipPhases: "architecture,release", estimatedDuration: 180 },
+  "3": { label: "complex", skipPhases: "none", estimatedDuration: 480 },
+};
+
+export function normalizeForcedTier(value: string | null | undefined): "1" | "2" | "3" | null {
+  const normalized = value?.trim();
+  return normalized === "1" || normalized === "2" || normalized === "3" ? normalized : null;
+}
+
+export function buildForcedTierOutput(tier: "1" | "2" | "3"): string {
+  const meta = FORCED_TIER_METADATA[tier];
+  return [
+    `TIER: ${tier}`,
+    `TIER_LABEL: ${meta.label}`,
+    "RATIONALE: Force-tiered by caller.",
+    `SKIP_PHASES: ${meta.skipPhases}`,
+    `ESTIMATED_DURATION: ${meta.estimatedDuration}`,
+  ].join("\n");
+}
+
 /**
  * Throttle cleanupAbandonedSteps: run at most once every 5 minutes.
  */
@@ -881,6 +903,15 @@ export function claimStep(agentId: string): ClaimResult {
 
   // Always inject run_id so templates can use {{run_id}} (e.g. for scoped progress files)
   context["run_id"] = step.run_id;
+
+  const forcedTier = step.step_id === "assess-complexity"
+    ? normalizeForcedTier(context["force_tier"])
+    : null;
+  if (forcedTier) {
+    logger.info(`Force-tier override applied: ${forcedTier}`, { runId: step.run_id, stepId: step.step_id });
+    completeStep(step.id, buildForcedTierOutput(forcedTier));
+    return { found: false };
+  }
 
   // Compute has_frontend_changes from git diff when repo and branch are available
   if (context["repo"] && context["branch"]) {
@@ -1070,19 +1101,10 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   // Moved from here to post-validation path so fast-failing agents stay tracked
   const agentForHeartbeat = db.prepare("SELECT agent_id FROM steps WHERE id = ?").get(stepId) as { agent_id: string } | undefined;
 
-  // SCORE: / PR_URL: validation — reject non-consolidate steps that don't contain a valid completion marker
   const isConsolidate = step.step_id === "consolidate";
   // Fix #5: Reject empty output at the source — empty heredoc piping from RC1
   if (!isConsolidate && (!output || output.trim() === '')) {
     logger.warn(`Step ${step.step_id} submitted empty output — rejecting and resetting to pending`, { runId: step.run_id, stepId: step.step_id });
-    db.prepare(
-      "UPDATE steps SET status = 'pending', output = NULL, updated_at = datetime('now') WHERE id = ?"
-    ).run(stepId);
-    return { advanced: false, runCompleted: false };
-  }
-  const hasValidMarker = output && (output.includes("SCORE:") || output.includes("PR_URL:"));
-  if (!isConsolidate && output && !hasValidMarker) {
-    logger.warn(`Step ${step.step_id} output missing valid completion marker (SCORE: or PR_URL:) — rejecting and resetting to pending`, { runId: step.run_id, stepId: step.step_id });
     db.prepare(
       "UPDATE steps SET status = 'pending', output = NULL, updated_at = datetime('now') WHERE id = ?"
     ).run(stepId);

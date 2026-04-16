@@ -19,6 +19,7 @@ Or on error:
 GATE_STATUS: error — <reason>
 ```
 
+If `AUTO_APPROVE=true`, immediately output exactly `GATE_STATUS: auto-approved` and nothing else.
 If you output anything other than GATE_STATUS:, you will be re-run.
 
 ## ANTI-DRIFT CLAUSE
@@ -37,7 +38,7 @@ You are a **human approval gate manager**. Period.
 
 Read AUTO_APPROVE from the workflow context.
 
-- If `AUTO_APPROVE=true`: skip to Step 3 (auto-approve).
+- If `AUTO_APPROVE=true`: immediately output `GATE_STATUS: auto-approved` and STOP. Do not emit `GATE_REASON`, summaries, or any other lines.
 - If `AUTO_APPROVE=false`: proceed to Step 2 (summarize for human).
 
 ### Step 2 — Summarize Previous Phase Output
@@ -102,7 +103,6 @@ Read the architecture spec file. Produce a summary (max 500 words):
 **Auto-approve mode:**
 ```
 GATE_STATUS: auto-approved
-GATE_REASON: auto_approve=true — skipping human review
 ```
 
 **Human review mode:**

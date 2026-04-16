@@ -5,13 +5,13 @@
 /**
  * Agent schema based on workflow prefix.
  * The full agent ID carries the workflow signal (review vs fix) — preserve it.
- * Fallback to 'review' is safer (less likely to false-reject).
+ * Unknown agents are validated by step contracts elsewhere and should not be schema-rejected.
  */
-export function getAgentSchema(agentId: string): "review" | "fix" | "consolidate" {
+export function getAgentSchema(agentId: string): "review" | "fix" | "consolidate" | null {
   if (agentId.includes("consolidate")) return "consolidate";
   if (agentId.includes("swarm-code-review")) return "review";
   if (agentId.includes("swarm-code-fix")) return "fix";
-  return "review"; // safe default
+  return null;
 }
 
 /**
@@ -46,7 +46,7 @@ export function validateStepOutput(
   }
 
   const schema = getAgentSchema(agentId);
-  const requiredFields = SCHEMA_REQUIRED_FIELDS[schema] ?? [];
+  const requiredFields = schema ? (SCHEMA_REQUIRED_FIELDS[schema] ?? []) : [];
   if (requiredFields.length === 0) return { valid: true };
 
   const presentKeys = new Set(parseOutputKeys(output));
@@ -90,7 +90,7 @@ export function parseExpects(expectsField: string | null): string[] {
   // Try JSON array first
   try {
     const parsed = JSON.parse(expectsField);
-    if (Array.isArray(parsed)) return parsed.map((k: string) => k.toUpperCase());
+    if (Array.isArray(parsed)) return parsed.map((k: string) => normalizeContractKey(k));
   } catch {
     // Not JSON, treat as comma-separated or single key
   }
@@ -100,7 +100,7 @@ export function parseExpects(expectsField: string | null): string[] {
     .split(",")
     .map((k) => k.trim())
     .filter((k) => k.length > 0)
-    .map((k) => k.toUpperCase());
+    .map(normalizeContractKey);
 }
 
 /**
@@ -166,7 +166,8 @@ export function validateContractAndDispatch(
  */
 function extractOutputValue(output: string, key: string): string | undefined {
   const cleaned = stripMarkdown(output);
-  const regex = new RegExp(`^${key}:\\s*(.*)$`, "im");
+  const normalizedKey = escapeRegExp(normalizeContractKey(key));
+  const regex = new RegExp(`^\\s*${normalizedKey}\\s*:\\s*(.*)$`, "im");
   const match = cleaned.match(regex);
   return match?.[1]?.trim();
 }
@@ -178,7 +179,7 @@ function extractOutputValue(output: string, key: string): string | undefined {
  */
 function stripMarkdown(output: string): string {
   return output
-    .replace(/```[\s\S]*?```/g, "") // remove fenced code blocks
+    .replace(/```[^\n]*\n([\s\S]*?)```/g, "$1") // unwrap fenced code blocks
     .replace(/^\s*`([^`]+)`\s*$/gm, "$1") // remove inline backtick wrappers
     .trim();
 }
@@ -193,10 +194,18 @@ function parseOutputKeys(output: string): string[] {
   const cleaned = stripMarkdown(output);
   for (const line of cleaned.split("\n")) {
     // Case-insensitive: match any case, normalize to uppercase for comparison
-    const match = line.match(/^([A-Za-z_]+):\s*/);
+    const match = line.match(/^\s*([A-Za-z_]+)\s*:\s*/);
     if (match) keys.push(match[1].toUpperCase());
   }
   return keys;
+}
+
+function normalizeContractKey(key: string): string {
+  return key.trim().replace(/:+$/, "").toUpperCase();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export { SCHEMA_REQUIRED_FIELDS };

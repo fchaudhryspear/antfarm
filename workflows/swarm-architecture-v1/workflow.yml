@@ -38,7 +38,7 @@ acceptance_criteria:
   - "Architecture JSON written to docs/architecture/<feature-name>.json"
   - "ADR count, endpoint count, component count all non-zero"
 polling:
-  model: ollama-cloud/deepseek-v3.2:cloud
+  model: ollama-cloud/glm-5.1:cloud
   delivery:
     channel: telegram
   timeoutSeconds: 5400
@@ -60,7 +60,7 @@ agents:
       baseDir: agents/system-architect
       files:
         AGENTS.md: agents/system-architect/AGENTS.md
-    model: ollama-cloud/deepseek-v3.2:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
   - id: api-designer
@@ -70,7 +70,7 @@ agents:
       baseDir: agents/api-designer
       files:
         AGENTS.md: agents/api-designer/AGENTS.md
-    model: ollama-cloud/minimax-m2.7:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
   - id: data-architect
@@ -80,7 +80,7 @@ agents:
       baseDir: agents/data-architect
       files:
         AGENTS.md: agents/data-architect/AGENTS.md
-    model: ollama-cloud/deepseek-v3.2:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
   - id: frontend-architect
@@ -100,7 +100,7 @@ agents:
       baseDir: agents/devops-architect
       files:
         AGENTS.md: agents/devops-architect/AGENTS.md
-    model: ollama-cloud/minimax-m2.7:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
   - id: visual-designer
@@ -120,15 +120,17 @@ agents:
       baseDir: agents/arch-compiler
       files:
         AGENTS.md: agents/arch-compiler/AGENTS.md
-    model: ollama-cloud/deepseek-v3.2:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
 steps:
   - id: parse-prd
     agent: arch-intake
-    timeout_minutes: 25
+    timeout_minutes: 15
     expects: 'ARCH_INTAKE_PARSED:'
     timeoutSeconds: 900
+    max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Parse the PRD JSON and prepare work assignments for 6 downstream architecture agents.
       REPO_PATH: {{ repo_path }}
@@ -159,9 +161,11 @@ steps:
   - id: system-design
     agent: system-architect
     depends_on: [parse-prd]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'ADR_'
     timeoutSeconds: 3600
+    max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Define high-level system architecture from PRD requirements.
       REPO_PATH: {{ repo_path }}
@@ -197,9 +201,11 @@ steps:
   - id: api-design-core
     agent: api-designer
     depends_on: [parse-prd]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'ENDPOINT_COUNT:'
     timeoutSeconds: 3600
+    max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Design CRUD API endpoints for subscriptions, payments, and payment methods.
       REPO_PATH: {{ repo_path }}
@@ -232,9 +238,11 @@ steps:
   - id: api-design-webhooks
     agent: api-designer
     depends_on: [parse-prd]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'WEBHOOK_EVENT_COUNT:'
     timeoutSeconds: 3600
+    max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Design Stripe webhook handlers, event processing, and retry logic.
       REPO_PATH: {{ repo_path }}
@@ -267,9 +275,11 @@ steps:
   - id: data-design
     agent: data-architect
     depends_on: [parse-prd]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'SCHEMA_CHANGES_COUNT:'
     timeoutSeconds: 3600
+    max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Design database schema changes for the feature.
       REPO_PATH: {{ repo_path }}
@@ -298,9 +308,11 @@ steps:
   - id: frontend-design
     agent: frontend-architect
     depends_on: [parse-prd]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'COMPONENT_COUNT:'
     timeoutSeconds: 3600
+    max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Design frontend component hierarchy and routing for the feature.
       REPO_PATH: {{ repo_path }}
@@ -332,9 +344,11 @@ steps:
   - id: devops-design
     agent: devops-architect
     depends_on: [parse-prd]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'DEPLOYMENT_STRATEGY:'
     timeoutSeconds: 3600
+    max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Design deployment strategy, CI/CD changes, and monitoring for the feature.
       REPO_PATH: {{ repo_path }}
@@ -376,10 +390,11 @@ steps:
   - id: visual-design
     agent: visual-designer
     depends_on: [parse-prd]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'VISUAL_DESIGN:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Create visual design specifications from PRD requirements.
       REPO_PATH: {{ repo_path }}
@@ -422,9 +437,11 @@ steps:
       - frontend-design
       - devops-design
       - visual-design
-    timeout_minutes: 30
+    timeout_minutes: 90
     expects: 'ARCH_STATUS:'
     timeoutSeconds: 5400
+    max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Compile all architecture outputs into a cohesive technical specification.
       REPO_PATH: {{ repo_path }}

@@ -46,7 +46,7 @@ acceptance_criteria:
   - "No hardcoded project names, paths, or IDs"
 
 polling:
-  model: ollama-cloud/deepseek-v3.2:cloud
+  model: ollama-cloud/glm-5.1:cloud
   delivery:
     channel: telegram
   intervalSeconds: 30
@@ -122,7 +122,7 @@ agents:
 steps:
   - id: phase-1-scaffold
     agent: scaffolder
-    timeout_minutes: 30
+    timeout_minutes: 60
     input: |
       You are implementing Phase 1 (Foundation/Scaffold) for this project.
 
@@ -187,12 +187,13 @@ steps:
 
     expects: "STATUS: done"
     max_retries: 1
+    timeoutSeconds: 1800
     depends_on: [phase-1-scaffold]
     on_fail: escalate_to_human
 
   - id: phase-2-repos
     agent: backend-engineer
-    timeout_minutes: 30
+    timeout_minutes: 45
     input: |
       You are implementing Phase 2 Band 2 (Repositories/Data Access) for this project.
 
@@ -226,7 +227,7 @@ steps:
 
   - id: phase-2-services
     agent: backend-engineer
-    timeout_minutes: 30
+    timeout_minutes: 45
     input: |
       You are implementing Phase 2 Band 3 (Services/Business Logic) for this project.
 
@@ -260,7 +261,7 @@ steps:
 
   - id: phase-2-handlers-crud
     agent: backend-engineer
-    timeout_minutes: 30
+    timeout_minutes: 45
     input: |
       You are implementing Phase 2 Band 4a (API Route Handlers) for this project.
 
@@ -294,7 +295,7 @@ steps:
 
   - id: phase-2-handlers-webhooks
     agent: backend-engineer-b
-    timeout_minutes: 30
+    timeout_minutes: 45
     input: |
       You are implementing Phase 2 Band 4b (Webhook/Event Handlers) for this project.
 
@@ -329,7 +330,7 @@ steps:
 
   - id: phase-2-middleware
     agent: backend-engineer-b
-    timeout_minutes: 30
+    timeout_minutes: 45
     input: |
       You are implementing Phase 2 Band 5 (Middleware) for this project.
 
@@ -363,7 +364,7 @@ steps:
 
   - id: phase-2-tests-models
     agent: backend-engineer
-    timeout_minutes: 35
+    timeout_minutes: 30
     input: |
       You are implementing Phase 2 Band 6a (Model & Repository Tests) for this project.
 
@@ -399,7 +400,7 @@ steps:
 
   - id: phase-2-tests-services
     agent: backend-engineer-b
-    timeout_minutes: 35
+    timeout_minutes: 30
     input: |
       You are implementing Phase 2 Band 6b (Service Layer Tests) for this project.
 
@@ -435,7 +436,7 @@ steps:
 
   - id: phase-2-tests-handlers
     agent: backend-engineer
-    timeout_minutes: 35
+    timeout_minutes: 30
     input: |
       You are implementing Phase 2 Band 6c (Handler & Middleware Tests) for this project.
 
@@ -474,7 +475,7 @@ steps:
   - id: phase-2-lint
     agent: backend-engineer
     depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers]
-    timeout_minutes: 30
+    timeout_minutes: 10
     expects: "STATUS:"
     timeoutSeconds: 600
     max_retries: 1
@@ -533,6 +534,7 @@ steps:
 
     expects: "STATUS: done"
     max_retries: 1
+    timeoutSeconds: 1800
     depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers]
     on_fail: escalate_to_human
 
@@ -568,13 +570,14 @@ steps:
 
     expects: "STATUS: done"
     max_retries: 1
+    timeoutSeconds: 1800
     depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers]
     on_fail: escalate_to_human
 
   - id: phase-3-lint
     agent: backend-engineer
     depends_on: [phase-3-frontend-a, phase-3-frontend-b]
-    timeout_minutes: 30
+    timeout_minutes: 10
     expects: "STATUS:"
     timeoutSeconds: 600
     max_retries: 1
@@ -651,6 +654,7 @@ steps:
 
     expects: "STATUS: done"
     max_retries: 1
+    timeoutSeconds: 1800
     depends_on: [phase-2-lint, phase-3-lint]
     on_fail: escalate_to_human
 

@@ -31,7 +31,7 @@ acceptance_criteria:
   - "Open questions aggregated for human review"
 
 polling:
-  model: ollama-cloud/deepseek-v3.2:cloud
+  model: ollama-cloud/glm-5.1:cloud
   delivery:
     channel: telegram
   timeoutSeconds: 3600
@@ -66,7 +66,7 @@ agents:
       baseDir: agents/technical-feasibility
       files:
         AGENTS.md: agents/technical-feasibility/AGENTS.md
-    model: ollama-cloud/deepseek-v3.2:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
 
@@ -88,7 +88,7 @@ agents:
       baseDir: agents/security-compliance
       files:
         AGENTS.md: agents/security-compliance/AGENTS.md
-    model: ollama-cloud/deepseek-v3.2:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
 
@@ -99,17 +99,18 @@ agents:
       baseDir: agents/prd-compiler
       files:
         AGENTS.md: agents/prd-compiler/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
 
 steps:
   - id: intake
     agent: intake-parser
-    timeout_minutes: 25
+    timeout_minutes: 5
     expects: 'INTAKE_PARSED:'
     timeoutSeconds: 300
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Parse the following feature request and extract structured intake data.
 
@@ -129,10 +130,11 @@ steps:
   - id: product-analysis
     agent: product-strategist
     depends_on: [intake]
-    timeout_minutes: 25
+    timeout_minutes: 30
     expects: 'PRODUCT_ANALYSIS:'
     timeoutSeconds: 1800
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Define user stories, acceptance criteria, success metrics, and scope
       for the following feature.
@@ -152,10 +154,11 @@ steps:
   - id: tech-feasibility
     agent: technical-feasibility
     depends_on: [intake]
-    timeout_minutes: 25
+    timeout_minutes: 30
     expects: 'TECH_FEASIBILITY:'
     timeoutSeconds: 1800
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Evaluate technical feasibility of the feature against the existing codebase.
 
@@ -176,10 +179,11 @@ steps:
   - id: ux-flows
     agent: ux-flow-designer
     depends_on: [intake]
-    timeout_minutes: 25
+    timeout_minutes: 30
     expects: 'UX_FLOWS:'
     timeoutSeconds: 1800
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Design user flows for the feature including error states, edge cases,
       loading states, empty states, and accessibility requirements.
@@ -201,10 +205,11 @@ steps:
   - id: security-analysis
     agent: security-compliance
     depends_on: [intake]
-    timeout_minutes: 25
+    timeout_minutes: 30
     expects: 'SECURITY_ANALYSIS:'
     timeoutSeconds: 1800
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Identify security and compliance requirements for the feature.
 
@@ -229,10 +234,11 @@ steps:
       - tech-feasibility
       - ux-flows
       - security-analysis
-    timeout_minutes: 25
+    timeout_minutes: 45
     expects: 'PRD_STATUS:'
     timeoutSeconds: 2700
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Compile all specialist outputs into a unified PRD JSON document.
 

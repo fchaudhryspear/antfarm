@@ -132,7 +132,7 @@ trap "bash $SESSION_TIMEOUT_HOOK; rm -f $SESSION_TIMEOUT_HOOK" EXIT
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
 
-const DEFAULT_POLLING_TIMEOUT_SECONDS = 1800; // 30 min — Phase A timeout tuning (was 600/10min)
+const DEFAULT_POLLING_TIMEOUT_SECONDS = 600; // 10 min — v4 fix for consolidate timeout (was 120)
 const DEFAULT_POLLING_MODEL = "default";
 
 function extractModel(value: unknown): string | undefined {

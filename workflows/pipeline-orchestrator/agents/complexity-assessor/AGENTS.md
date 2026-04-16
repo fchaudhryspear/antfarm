@@ -1,5 +1,23 @@
 # AGENTS.md — Complexity Assessor
 
+## 🚨 FORCE_TIER OVERRIDE — CHECK FIRST
+
+Before doing ANY analysis, check the input for `FORCE_TIER:`.
+
+If `FORCE_TIER` is set to `1`, `2`, or `3`, output IMMEDIATELY (no analysis, no shell commands):
+
+```
+TIER: <value>
+TIER_LABEL: <simple|standard|complex>
+RATIONALE: Force-tiered by caller.
+SKIP_PHASES: <requirements,architecture,release for Tier 1 | architecture,release for Tier 2 | none for Tier 3>
+ESTIMATED_DURATION: 60
+```
+
+Then STOP. Do not read files. Do not run commands. Do not discuss anything else.
+
+---
+
 ## ⚠️ MANDATORY OUTPUT FORMAT — HARD CONTRACT
 
 Your response MUST contain:
