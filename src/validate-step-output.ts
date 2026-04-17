@@ -131,8 +131,13 @@ export function validateContractAndDispatch(
       ? extractOutputValue(output, "SWARM_STATUS")?.toLowerCase()
       : undefined;
     
-    // Only "completed" or "skipped" allow completion
-    if (swarmStatus !== "completed" && swarmStatus !== "skipped") {
+    // Valid states: "completed" (sub-swarm finished), "skipped" (Tier 1 skip),
+    // "dispatched" (sub-swarm polling), "running" (sub-swarm still in progress)
+    // Both "dispatched" and "running" mean the controller has spawned a sub-swarm
+    // and is polling for completion. The step stays in running state for cron re-poll.
+    // Valid dispatch statuses: completed, skipped, dispatched, running, blocked
+    // "blocked" = release step blocked by QA failure after max cycles
+    if (swarmStatus !== "completed" && swarmStatus !== "skipped" && swarmStatus !== "dispatched" && swarmStatus !== "running" && swarmStatus !== "blocked") {
       swarmStatusInvalid = true;
     }
   }
@@ -154,7 +159,7 @@ export function validateContractAndDispatch(
       valid: false,
       missingExpects: [],
       swarmStatusInvalid: true,
-      reason: `SWARM_STATUS must be 'completed' or 'skipped', got: ${swarmStatus || "(missing)"}`,
+      reason: `SWARM_STATUS must be 'completed', 'skipped', 'dispatched', 'running', or 'blocked', got: ${swarmStatus || "(missing)"}`,
     };
   }
   
@@ -194,7 +199,7 @@ function parseOutputKeys(output: string): string[] {
   const cleaned = stripMarkdown(output);
   for (const line of cleaned.split("\n")) {
     // Case-insensitive: match any case, normalize to uppercase for comparison
-    const match = line.match(/^\s*([A-Za-z_]+)\s*:\s*/);
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*/);
     if (match) keys.push(match[1].toUpperCase());
   }
   return keys;

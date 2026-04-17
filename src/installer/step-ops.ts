@@ -5,11 +5,11 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { execSync, execFileSync } from "node:child_process";
-import { teardownWorkflowCronsIfIdle } from "./agent-cron.js";
+import { teardownWorkflowCronsIfIdle, pauseWorkflowCrons, resumeWorkflowCrons } from "./agent-cron.js";
 import { buildWorkPrompt } from "./agent-cron.js";
 import { emitEvent } from "./events.js";
 import { logger } from "../lib/logger.js";
-import { sendSessionMessage, spawnAgentSession } from "./gateway-api.js";
+import { sendSessionMessage, spawnAgentSession, listCronJobs } from "./gateway-api.js";
 import { getMaxRoleTimeoutSeconds, getRoleTimeoutSeconds, inferRole } from "./install.js";
 import { loadWorkflowSpec } from "./workflow-spec.js";
 import { resolveWorkflowDir } from "./paths.js";
@@ -21,11 +21,11 @@ import { validateConsolidateInputs } from "../validate-consolidate-inputs.js";
 import { recordAgentRun, recordAgentRetry, getAgentStats } from "../agent-retry-stats.js";
 
 // ── Model Escalation on Retry ───────────────────────────────────────
-// Two-tier escalation: Ollama Cloud → OpenAI Codex (April 6, 2026).
+// Two-tier escalation: Ollama Cloud → Anthropic Claude (April 16, 2026).
 // Tier 1 (Ollama Cloud): most models escalate to kimi-k2.5:cloud.
-// Tier 2 (OpenAI Codex): kimi-k2.5 escalates into Codex chain.
-// Codex chain: gpt-5.4-mini → gpt-5.1 → gpt-5.1-codex-max → gpt-5.2 → gpt-5.4.
-// Terminal (no further escalation): openai-codex/gpt-5.4, ollama-cloud/kimi-k2.5:cloud.
+// Tier 2 (Anthropic): kimi-k2.5 escalates to Claude Sonnet → Claude Opus.
+// Codex chain REMOVED — OpenAI Codex provider is broken (requires browser OAuth, not API keys).
+// Terminal (no further escalation): anthropic/claude-opus-4-6, ollama-cloud/kimi-k2.5:cloud.
 const ESCALATION_MAP: Record<string, string[]> = {
   // ── Tier 1: Ollama Cloud → kimi-k2.5 ────────────────────────────────
   "ollama-cloud/qwen3.5:397b-cloud": ["ollama-cloud/kimi-k2.5:cloud"],
@@ -37,14 +37,18 @@ const ESCALATION_MAP: Record<string, string[]> = {
   "ollama-cloud/mistral-large-3:675b-cloud": ["ollama-cloud/kimi-k2.5:cloud"],
   "ollama-cloud/qwen3-coder-next:cloud": ["ollama-cloud/kimi-k2.5:cloud"],
   "ollama-cloud/glm-5:cloud": ["ollama-cloud/kimi-k2.5:cloud"],
-  // ── Tier 2: OpenAI Codex chain ─────────────────────────────────────
-  "ollama-cloud/kimi-k2.5:cloud": ["openai-codex/gpt-5.4-mini"],
-  "openai-codex/gpt-5.4-mini": ["openai-codex/gpt-5.1"],
-  "openai-codex/gpt-5.1": ["openai-codex/gpt-5.1-codex-max"],
-  "openai-codex/gpt-5.1-codex-max": ["openai-codex/gpt-5.2"],
-  "openai-codex/gpt-5.2": ["openai-codex/gpt-5.4"],
+  // ── Tier 2: Anthropic Claude ────────────────────────────────────────
+  "ollama-cloud/kimi-k2.5:cloud": ["anthropic/claude-sonnet-4-6"],
+  "anthropic/claude-sonnet-4-6": ["anthropic/claude-opus-4-6"],
   // Terminal — no further escalation
-  "openai-codex/gpt-5.4": [],
+  "anthropic/claude-opus-4-6": [],
+  // ── Deprecated Codex models (kept for backward compat, redirect to Claude) ──
+  "openai-codex/gpt-5.4-mini": ["anthropic/claude-sonnet-4-6"],
+  "openai-codex/gpt-5.1": ["anthropic/claude-sonnet-4-6"],
+  "openai-codex/gpt-5.1-codex-max": ["anthropic/claude-sonnet-4-6"],
+  "openai-codex/gpt-5.2": ["anthropic/claude-sonnet-4-6"],
+  "openai-codex/gpt-5.4": ["anthropic/claude-sonnet-4-6"],
+  "default": ["ollama-cloud/kimi-k2.5:cloud"],
 };
 
 /**
@@ -54,10 +58,10 @@ const ESCALATION_MAP: Record<string, string[]> = {
  */
 function getEscalatedModel(currentModel: string | null, attemptNumber: number = 1): string | null {
   if (!currentModel) {
-    // First escalation — default to gpt-5.4-mini (top of OpenAI Codex chain).
-    return "openai-codex/gpt-5.4-mini";
+    // First escalation — default to kimi-k2.5:cloud (safe Ollama Cloud model).
+    return "ollama-cloud/kimi-k2.5:cloud";
   }
-  const chain = ESCALATION_MAP[currentModel] ?? [];
+  const chain = ESCALATION_MAP[currentModel] ?? ESCALATION_MAP["default"] ?? [];
   // attemptNumber 1 after first escalation = chain[0], etc.
   // But we track the *current* model, so just take chain[0] (next step up)
   return chain.length > 0 ? chain[0] : null;
@@ -177,7 +181,7 @@ export function parseOutputKeyValues(output: string): Record<string, string> {
   }
 
   for (const line of lines) {
-    const match = line.match(/^([A-Z_]+):\s*(.*)$/);
+    const match = line.match(/^([A-Z][A-Z0-9_]*):\s*(.*)$/);
     if (match) {
       // New KEY: line found — flush previous key
       commitPending();
@@ -291,8 +295,13 @@ export function stopIndependentCleanupTimer(): void {
 function scheduleRunCronTeardown(runId: string): void {
   try {
     const db = getDb();
-    const run = db.prepare("SELECT workflow_id FROM runs WHERE id = ?").get(runId) as { workflow_id: string } | undefined;
+    const run = db.prepare("SELECT workflow_id, status FROM runs WHERE id = ?").get(runId) as { workflow_id: string; status: string } | undefined;
     if (run) {
+      // If run is in terminal state, pause crons immediately (don't just check idle)
+      if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') {
+        pauseWorkflowCrons(run.workflow_id, `run ${runId} ${run.status}`).catch(() => {});
+      }
+      // Also check if all runs are done — teardown if safe
       teardownWorkflowCronsIfIdle(run.workflow_id).catch(() => {});
     }
   } catch {
@@ -749,7 +758,14 @@ export function peekStep(agentId: string): PeekResult {
      WHERE s.agent_id = ? AND s.status IN ('pending', 'waiting')
        AND r.status = 'running'`
   ).get(agentId) as { cnt: number };
-  return row.cnt > 0 ? "HAS_WORK" : "NO_WORK";
+  const result: PeekResult = row.cnt > 0 ? "HAS_WORK" : "NO_WORK";
+  if (result === "NO_WORK") {
+    const ticks = recordIdleTick(agentId);
+    logger.debug(`peekStep: ${agentId} NO_WORK (idle ticks: ${ticks}/${MAX_IDLE_TICKS})`);
+  } else {
+    resetIdleTicks(agentId);
+  }
+  return result;
 }
 
 /**
@@ -765,6 +781,83 @@ export function peekStep(agentId: string): PeekResult {
  * Returns 'running' (actively in-progress), or 'none' (safe to claim).
  */
 const STALE_SESSION_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes — no output = stale
+
+// ── Idle tick auto-disable ──────────────────────────────────────────
+// When a cron polls and gets NO_WORK repeatedly, we track idle ticks.
+// After MAX_IDLE_TICKS consecutive NO_WORK results, the cron is disabled
+// to prevent wasting tokens on dead runs.
+const MAX_IDLE_TICKS = 10; // 10 minutes at 1-min poll interval
+const IDLE_TICK_RESET_ON_WORK = true; // reset to 0 when work is found
+
+/**
+ * Record an idle tick for an agent (NO_WORK result from peek/claim).
+ * Returns the current idle tick count. If it exceeds MAX_IDLE_TICKS,
+ * auto-disable that agent's cron.
+ */
+function recordIdleTick(agentId: string): number {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  // Upsert: increment idle_ticks
+  const existing = db.prepare(
+    "SELECT idle_ticks FROM cron_idle_ticks WHERE agent_id = ?"
+  ).get(agentId) as { idle_ticks: number } | undefined;
+
+  const newTicks = (existing?.idle_ticks ?? 0) + 1;
+
+  if (existing) {
+    db.prepare(
+      "UPDATE cron_idle_ticks SET idle_ticks = ?, updated_at = ? WHERE agent_id = ?"
+    ).run(newTicks, now, agentId);
+  } else {
+    db.prepare(
+      "INSERT INTO cron_idle_ticks (agent_id, idle_ticks, last_work_at, disabled_at, updated_at) VALUES (?, ?, NULL, NULL, ?)"
+    ).run(agentId, newTicks, now);
+  }
+
+  if (newTicks >= MAX_IDLE_TICKS) {
+    logger.warn(`Cron auto-disable: ${agentId} reached ${newTicks} idle ticks (max ${MAX_IDLE_TICKS}), disabling`);
+    disableCronForAgent(agentId).catch(() => {});
+  }
+
+  return newTicks;
+}
+
+/**
+ * Reset idle ticks for an agent (work was found or claimed).
+ */
+function resetIdleTicks(agentId: string): void {
+  const db = getDb();
+  const now = new Date().toISOString();
+  db.prepare(
+    "INSERT INTO cron_idle_ticks (agent_id, idle_ticks, last_work_at, disabled_at, updated_at) VALUES (?, 0, ?, NULL, ?) ON CONFLICT(agent_id) DO UPDATE SET idle_ticks = 0, last_work_at = ?, disabled_at = NULL, updated_at = ?"
+  ).run(agentId, now, now, now, now);
+}
+
+/**
+ * Disable a single agent's cron via openclaw CLI.
+ */
+async function disableCronForAgent(agentId: string): Promise<void> {
+  try {
+    const { execSync } = await import("node:child_process");
+    // Find the cron for this agent
+    const listResult = await listCronJobs();
+    if (!listResult.ok || !listResult.jobs) return;
+    const prefix = `antfarm/`;
+    const suffix = `/${agentId}`;
+    const match = listResult.jobs.find((j: { name: string }) =>
+      j.name.endsWith(suffix) && j.name.startsWith(prefix)
+    );
+    if (match) {
+      execSync(`openclaw cron disable ${match.id}`, { stdio: "pipe" });
+      logger.info(`Auto-disabled idle cron for ${agentId} (job: ${match.name})`);
+    }
+  } catch (err) {
+    logger.warn(`Failed to auto-disable cron for ${agentId}: ${err}`);
+  }
+}
+
+
 
 export function getStepStatus(agentId: string): string {
   const db = getDb();
@@ -926,9 +1019,9 @@ export function claimStep(agentId: string): ClaimResult {
     if (loopConfig?.over === "stories") {
       // Check if run has stories — if not, complete gracefully (empty array = no work, not failure)
       if (!runHasStories(step.run_id)) {
-        const message = "STORIES_JSON is empty — no items to process, marking step complete";
+        const message = "STORIES_JSON is empty — no items to process, marking step done";
         db.prepare(
-          "UPDATE steps SET status = 'completed', output = ?, updated_at = datetime('now') WHERE id = ?"
+          "UPDATE steps SET status = 'done', output = ?, updated_at = datetime('now') WHERE id = ?"
         ).run(message, step.id);
         // Don't fail the run — just mark step complete and let next step proceed
         const wfId = getWorkflowId(step.run_id);
@@ -1188,6 +1281,24 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     return { advanced: false, runCompleted: false };
   }
 
+  // Bug #2 fix: Dispatch steps that output SWARM_STATUS: dispatched/running are still polling.
+  // Don't mark them done — keep them in running state so the cron can re-poll.
+  // SWARM_STATUS: blocked is a terminal state (QA failure after max cycles) — mark done
+  if (step.step_id.includes("dispatch") && contractResult.valid) {
+    const parsed = parseOutputKeyValues(output);
+    const swarmStatus = parsed["SWARM_STATUS"]?.toLowerCase();
+    if (swarmStatus === "dispatched" || swarmStatus === "running") {
+      logger.info(`Dispatch step ${step.step_id} reports SWARM_STATUS: ${swarmStatus} — keeping in running state for sub-swarm polling`, { runId: step.run_id, stepId: step.step_id });
+      // Save output for context but don't complete — cron will re-claim and poll again
+      db.prepare("UPDATE steps SET output = ?, updated_at = datetime('now') WHERE id = ?").run(output, stepId);
+      return { advanced: false, runCompleted: false };
+    }
+    if (swarmStatus === "blocked") {
+      logger.info(`Dispatch step ${step.step_id} reports SWARM_STATUS: blocked — marking done as blocked`, { runId: step.run_id, stepId: step.step_id });
+      // Fall through to normal completion — blocked is terminal
+    }
+  }
+
   // Merge KEY: value lines into run context
   const run = db.prepare("SELECT context FROM runs WHERE id = ?").get(step.run_id) as { context: string };
   const context: Record<string, string> = JSON.parse(run.context);
@@ -1441,6 +1552,50 @@ function checkLoopContinuation(runId: string, loopStepId: string): { advanced: b
 }
 
 /**
+ * Evaluate a condition expression against the run context.
+ * Supports:
+ *   - `{{ steps.STEP_ID.KEY }}` variable substitution
+ *   - `not contains 'value'` operator
+ *   - `contains 'value'` operator
+ *
+ * Example: `{{ steps.assess-complexity.SKIP_PHASES }} not contains 'implementation'`
+ *
+ * Returns true if the condition is satisfied, false otherwise.
+ */
+function evaluateCondition(condition: string, context: Record<string, string>, stepId: string): boolean {
+  try {
+    // Substitute all {{ ... }} placeholders with context values
+    let resolved = condition.replace(/\{\{\s*([^}]+)\s*\}\}/g, (match, expr) => {
+      const trimmed = expr.trim();
+      // Context keys follow pattern: steps.STEP_ID.KEY or direct KEY
+      return context[trimmed] ?? match; // Keep original if not found
+    });
+
+    // Evaluate operators: "not contains 'value'" and "contains 'value'"
+    // Pattern: <left> not contains 'value' OR <left> contains 'value'
+    const notContainsMatch = resolved.match(/^(.+?)\s+not\s+contains\s+'([^']+)'$/i);
+    if (notContainsMatch) {
+      const left = notContainsMatch[1].trim();
+      const right = notContainsMatch[2];
+      return !left.includes(right);
+    }
+
+    const containsMatch = resolved.match(/^(.+?)\s+contains\s+'([^']+)'$/i);
+    if (containsMatch) {
+      const left = containsMatch[1].trim();
+      const right = containsMatch[2];
+      return left.includes(right);
+    }
+
+    // If no operator matched, treat as boolean: non-empty string = true
+    return resolved.trim().length > 0;
+  } catch (err) {
+    logger.warn(`Condition evaluation failed for step ${stepId}: ${String(err)} [condition=${condition}]. Failing closed — step will be skipped.`);
+    return false; // Fail closed — skip step on bad syntax to prevent unintended execution
+  }
+}
+
+/**
  * Advance the pipeline: find the next waiting step and make it pending, or complete the run.
  * Respects terminal run states — a failed run cannot be advanced or completed.
  */
@@ -1457,26 +1612,87 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
 
   // v4: Batch dispatch — find ALL waiting steps whose dependencies are satisfied
   const waitingSteps = db.prepare(
-    "SELECT id, step_id, agent_id, depends_on FROM steps WHERE run_id = ? AND status = 'waiting' ORDER BY step_index ASC"
-  ).all(runId) as Array<{ id: string; step_id: string; agent_id: string; depends_on: string | null }>;
+    "SELECT id, step_id, agent_id, depends_on, condition FROM steps WHERE run_id = ? AND status = 'waiting' ORDER BY step_index ASC"
+  ).all(runId) as Array<{ id: string; step_id: string; agent_id: string; depends_on: string | null; condition: string | null }>;
 
   // Get all completed step IDs for dependency resolution
+  // Accept 'done', 'completed', and 'skipped' as terminal statuses
   const doneStepIds = new Set(
-    (db.prepare("SELECT step_id FROM steps WHERE run_id = ? AND status = 'done'").all(runId) as Array<{ step_id: string }>).map(r => r.step_id)
+    (db.prepare("SELECT step_id FROM steps WHERE run_id = ? AND status IN ('done', 'completed', 'skipped')").all(runId) as Array<{ step_id: string }>).map(r => r.step_id)
   );
 
-  // Find all steps ready to dispatch (no depends_on, or all deps satisfied)
-  const readySteps = waitingSteps.filter(step => {
-    if (!step.depends_on) return true;
-    try {
-      const deps = JSON.parse(step.depends_on) as string[];
-      return Array.isArray(deps) && deps.every(dep => doneStepIds.has(dep));
-    } catch {
-      // depends_on might be comma-separated string
-      const deps = step.depends_on.split(',').map(s => s.trim());
-      return deps.every(dep => doneStepIds.has(dep));
+  // Get run context for condition evaluation
+  const runContext = JSON.parse(
+    (db.prepare("SELECT context FROM runs WHERE id = ?").get(runId) as { context: string }).context
+  ) as Record<string, string>;
+
+  // Merge step outputs into context so conditions can reference {{ steps.STEP_ID.KEY }}
+  const doneSteps = db.prepare(
+    "SELECT step_id, output FROM steps WHERE run_id = ? AND status IN ('done', 'completed', 'skipped') AND output IS NOT NULL"
+  ).all(runId) as Array<{ step_id: string; output: string }>;
+  for (const ds of doneSteps) {
+    if (!ds.output) continue;
+    for (const line of ds.output.split('\n')) {
+      const colonIdx = line.indexOf(':');
+      if (colonIdx > 0) {
+        const key = line.slice(0, colonIdx).trim();
+        const value = line.slice(colonIdx + 1).trim();
+        // Store as steps.STEP_ID.KEY so evaluateCondition can find it
+        runContext[`steps.${ds.step_id}.${key}`] = value;
+      }
     }
-  });
+  }
+
+  // Find all steps ready to dispatch (deps satisfied AND condition satisfied)
+  // Also identify steps to SKIP (deps satisfied but condition false)
+  const readySteps: typeof waitingSteps = [];
+  const skippedSteps: typeof waitingSteps = [];
+
+  for (const step of waitingSteps) {
+    // Check dependencies
+    let depsSatisfied = true;
+    if (step.depends_on) {
+      try {
+        const deps = JSON.parse(step.depends_on) as string[];
+        if (!Array.isArray(deps) || !deps.every(dep => doneStepIds.has(dep))) {
+          depsSatisfied = false;
+        }
+      } catch {
+        // depends_on might be comma-separated string
+        const deps = step.depends_on.split(',').map(s => s.trim());
+        if (!deps.every(dep => doneStepIds.has(dep))) {
+          depsSatisfied = false;
+        }
+      }
+    }
+
+    if (!depsSatisfied) continue; // Still waiting on dependencies
+
+    // Check condition (if present)
+    if (step.condition) {
+      const result = evaluateCondition(step.condition, runContext, step.step_id);
+      if (result) {
+        readySteps.push(step);
+      } else {
+        skippedSteps.push(step);
+      }
+    } else {
+      readySteps.push(step);
+    }
+  }
+
+  // Mark skipped steps with 'skipped' status (separate from 'done' for semantic clarity)
+  if (skippedSteps.length > 0) {
+    const skipStmt = db.prepare("UPDATE steps SET status = 'skipped', output = ?, updated_at = datetime('now') WHERE id = ?");
+    for (const step of skippedSteps) {
+      skipStmt.run(`SKIPPED: Condition not met: ${step.condition}`, step.id);
+      emitEvent({ ts: new Date().toISOString(), event: "step.skipped", runId, workflowId: wfId, stepId: step.step_id, detail: `Skipped: condition not met` });
+    }
+    logger.info(`Pipeline skipped ${skippedSteps.length} steps (conditions not met)`, { runId, workflowId: wfId });
+
+    // Recurse: skipped steps may unblock downstream dependencies
+    return advancePipeline(runId);
+  }
 
   if (readySteps.length > 0) {
     // Dispatch ALL ready steps at once
