@@ -199,7 +199,7 @@ export function checkOrphanedCrons(
 
 // ── Check: Stale Sessions (Heartbeat) ────────────────────────────────
 
-const HEARTBEAT_STALE_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes without a ping
+const HEARTBEAT_STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 min — Phase A timeout tuning (was 2 min)
 
 /**
  * Find sessions that haven't sent a heartbeat ping recently (Issue #339).

@@ -58,6 +58,8 @@ export type WorkflowStep = {
   on_fail?: WorkflowStepFailure;
   /** Per-step timeout in minutes (Issue #341). Defaults by role: review=25, fix=30, testing=35. */
   timeout_minutes?: number;
+  /** Tier-1 skip condition. Evaluated against run context. E.g. "{{ steps.X.SKIP_PHASES }} not contains 'implementation'" */
+  condition?: string;
 };
 
 export type Story = {

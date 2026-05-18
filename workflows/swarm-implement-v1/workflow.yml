@@ -46,7 +46,7 @@ acceptance_criteria:
   - "No hardcoded project names, paths, or IDs"
 
 polling:
-  model: ollama-cloud/deepseek-v3.2:cloud
+  model: ollama-cloud/glm-5.1:cloud
   delivery:
     channel: telegram
   intervalSeconds: 30
@@ -91,7 +91,7 @@ agents:
       baseDir: agents/frontend-engineer-a
       files:
         AGENTS.md: agents/frontend-engineer-a/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/kimi-k2.6:cloud
     delivery:
       channel: telegram
     name: Frontend Engineer A
@@ -102,7 +102,7 @@ agents:
       baseDir: agents/frontend-engineer-b
       files:
         AGENTS.md: agents/frontend-engineer-b/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/kimi-k2.6:cloud
     delivery:
       channel: telegram
     name: Frontend Engineer B
@@ -122,7 +122,7 @@ agents:
 steps:
   - id: phase-1-scaffold
     agent: scaffolder
-    timeout_minutes: 30
+    timeout_minutes: 60
     input: |
       You are implementing Phase 1 (Foundation/Scaffold) for this project.
 
@@ -135,8 +135,9 @@ steps:
       YOUR JOB:
       1. cd {{ repo_path }}
       2. git checkout {{ branch }} && git pull origin {{ branch }}
-      3. Read the architecture spec at {{ arch_path }} — it defines ALL tables, infra, and config needed
-      4. Read the PRD at {{ prd_path }} — it defines the feature requirements
+      3. If {{ arch_path }} is a real file path, read it — it defines ALL tables, infra, and config needed
+      4. If {{ prd_path }} is a real file path, read it — it defines the feature requirements
+      5. If either artifact is "skipped", empty, or missing, treat this as a Tier 1/no-op-capable task and infer the smallest safe foundation work directly from TASK and the existing repo.
 
       PHASE 1 SCOPE (Foundation):
       - Database migrations for any new tables/views/indexes defined in the arch spec
@@ -150,7 +151,9 @@ steps:
       - Match existing code style, naming conventions, and directory structure
       - After EACH file: git add <file> && git commit -m "feat(<scope>): <description>"
       - After all tasks: git push origin {{ branch }}
-      - Reply with STATUS: done and list of files created
+      - If there is no foundation/scaffold work to do, make no code changes and report that explicitly
+      - Your final response must include a standalone line exactly: STATUS: done
+      - Also list files created/modified, or FILES_MODIFIED: none
 
     expects: "STATUS: done"
     max_retries: 2
@@ -187,12 +190,13 @@ steps:
 
     expects: "STATUS: done"
     max_retries: 1
+    timeoutSeconds: 1800
     depends_on: [phase-1-scaffold]
     on_fail: escalate_to_human
 
   - id: phase-2-repos
     agent: backend-engineer
-    timeout_minutes: 30
+    timeout_minutes: 45
     input: |
       You are implementing Phase 2 Band 2 (Repositories/Data Access) for this project.
 
@@ -226,7 +230,7 @@ steps:
 
   - id: phase-2-services
     agent: backend-engineer
-    timeout_minutes: 30
+    timeout_minutes: 45
     input: |
       You are implementing Phase 2 Band 3 (Services/Business Logic) for this project.
 
@@ -260,7 +264,7 @@ steps:
 
   - id: phase-2-handlers-crud
     agent: backend-engineer
-    timeout_minutes: 30
+    timeout_minutes: 45
     input: |
       You are implementing Phase 2 Band 4a (API Route Handlers) for this project.
 
@@ -294,7 +298,7 @@ steps:
 
   - id: phase-2-handlers-webhooks
     agent: backend-engineer-b
-    timeout_minutes: 30
+    timeout_minutes: 45
     input: |
       You are implementing Phase 2 Band 4b (Webhook/Event Handlers) for this project.
 
@@ -329,7 +333,7 @@ steps:
 
   - id: phase-2-middleware
     agent: backend-engineer-b
-    timeout_minutes: 30
+    timeout_minutes: 45
     input: |
       You are implementing Phase 2 Band 5 (Middleware) for this project.
 
@@ -363,7 +367,7 @@ steps:
 
   - id: phase-2-tests-models
     agent: backend-engineer
-    timeout_minutes: 35
+    timeout_minutes: 30
     input: |
       You are implementing Phase 2 Band 6a (Model & Repository Tests) for this project.
 
@@ -399,7 +403,7 @@ steps:
 
   - id: phase-2-tests-services
     agent: backend-engineer-b
-    timeout_minutes: 35
+    timeout_minutes: 30
     input: |
       You are implementing Phase 2 Band 6b (Service Layer Tests) for this project.
 
@@ -435,7 +439,7 @@ steps:
 
   - id: phase-2-tests-handlers
     agent: backend-engineer
-    timeout_minutes: 35
+    timeout_minutes: 30
     input: |
       You are implementing Phase 2 Band 6c (Handler & Middleware Tests) for this project.
 
@@ -474,7 +478,7 @@ steps:
   - id: phase-2-lint
     agent: backend-engineer
     depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers]
-    timeout_minutes: 30
+    timeout_minutes: 10
     expects: "STATUS:"
     timeoutSeconds: 600
     max_retries: 1
@@ -533,6 +537,7 @@ steps:
 
     expects: "STATUS: done"
     max_retries: 1
+    timeoutSeconds: 1800
     depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers]
     on_fail: escalate_to_human
 
@@ -568,13 +573,14 @@ steps:
 
     expects: "STATUS: done"
     max_retries: 1
+    timeoutSeconds: 1800
     depends_on: [phase-2-tests-models, phase-2-tests-services, phase-2-tests-handlers]
     on_fail: escalate_to_human
 
   - id: phase-3-lint
     agent: backend-engineer
     depends_on: [phase-3-frontend-a, phase-3-frontend-b]
-    timeout_minutes: 30
+    timeout_minutes: 10
     expects: "STATUS:"
     timeoutSeconds: 600
     max_retries: 1
@@ -651,6 +657,7 @@ steps:
 
     expects: "STATUS: done"
     max_retries: 1
+    timeoutSeconds: 1800
     depends_on: [phase-2-lint, phase-3-lint]
     on_fail: escalate_to_human
 

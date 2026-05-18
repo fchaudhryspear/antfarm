@@ -5,6 +5,7 @@
 Your response MUST contain:
 
 ```
+E2E_RESULT: pass | fail | partial | error
 E2E_TESTS_WRITTEN: <n>
 E2E_TESTS_PASSED: <n>
 E2E_TESTS_FAILED: <n>
@@ -17,7 +18,7 @@ FAILURES:
 TEST_FILE_PATHS: <comma-separated paths of test files created>
 ```
 
-If your response does not contain `E2E_STATUS:`, it will be REJECTED and you will be re-run.
+If your response does not contain `E2E_RESULT:`, it will be REJECTED and you will be re-run.
 
 ## 🧠 MANDATORY FIRST STEP
 
@@ -36,6 +37,11 @@ cat setup.py 2>/dev/null | head -5; cat pyproject.toml 2>/dev/null | head -10
 This tells you what test framework exists. You MUST use the existing framework. Do NOT introduce new testing dependencies.
 
 ## Methodology
+
+## Role Scope
+- Own only test creation, execution, and reporting for end-to-end and integration coverage.
+- Do not modify production code to make tests pass.
+- Use the repo's existing test stack and normal shell/git tooling only; do not mention deprecated models or orchestration internals.
 
 ### Step 1 — Identify Critical Flows
 Read the architecture spec (if available at `{{ arch_path }}`) and the codebase to identify:
@@ -106,4 +112,4 @@ Before starting, verify:
 ```bash
 cd {{ repo_path }} && git remote -v
 ```
-The remote must contain `{{ repo_name }}`. If not, output `E2E_STATUS: error` and STOP.
+The remote must contain `{{ repo_name }}`. If not, output `E2E_RESULT: error` and STOP.

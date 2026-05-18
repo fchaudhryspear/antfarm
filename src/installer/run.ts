@@ -3,7 +3,7 @@ import { loadWorkflowSpec } from "./workflow-spec.js";
 import { resolveWorkflowDir } from "./paths.js";
 import { getDb, nextRunNumber } from "../db.js";
 import { logger } from "../lib/logger.js";
-import { ensureWorkflowCrons } from "./agent-cron.js";
+import { ensureWorkflowCrons, resumeWorkflowCrons } from "./agent-cron.js";
 import { emitEvent } from "./events.js";
 import { triggerImmediateStepEnqueue } from "./step-ops.js";
 
@@ -96,7 +96,7 @@ export async function runWorkflow(params: {
     insertRun.run(runId, runNumber, workflow.id, params.taskTitle, JSON.stringify(initialContext), notifyUrl, now, now);
 
     const insertStep = db.prepare(
-      "INSERT INTO steps (id, run_id, step_id, agent_id, step_index, input_template, expects, status, max_retries, type, loop_config, depends_on, timeout_minutes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO steps (id, run_id, step_id, agent_id, step_index, input_template, expects, status, max_retries, type, loop_config, depends_on, timeout_minutes, condition, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
 
     validateDependencyGraph(workflow.steps);
@@ -138,7 +138,8 @@ export async function runWorkflow(params: {
       const stepType = step.type ?? "single";
       const loopConfig = step.loop ? JSON.stringify(step.loop) : null;
       const timeoutMinutes = step.timeout_minutes ?? null;
-      insertStep.run(stepUuid, runId, step.id, agentId, i, step.input, step.expects, status, maxRetries, stepType, loopConfig, depsJson, timeoutMinutes, now, now);
+      const condition = step.condition ?? null;
+      insertStep.run(stepUuid, runId, step.id, agentId, i, step.input, step.expects, status, maxRetries, stepType, loopConfig, depsJson, timeoutMinutes, condition, now, now);
     }
 
     db.exec("COMMIT");
@@ -155,6 +156,13 @@ export async function runWorkflow(params: {
     const pendingAgentIds = pendingSteps.map(s => s.agent_id);
     logger.info(`Event-driven dispatch: firing ${pendingSteps.length} parallel steps immediately`);
     triggerImmediateStepEnqueue(pendingAgentIds, runId);
+  }
+
+  // Re-enable any paused crons from a previous terminal run
+  try {
+    await resumeWorkflowCrons(workflow.id);
+  } catch (err) {
+    logger.warn(`Failed to resume paused crons for ${workflow.id}: ${err}`);
   }
 
   // Start crons for this workflow (no-op if already running from another run)

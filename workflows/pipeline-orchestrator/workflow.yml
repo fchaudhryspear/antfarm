@@ -66,7 +66,7 @@ acceptance_criteria:
   - "Feature branch has all implementation + fixes committed"
 
 polling:
-  model: ollama-cloud/deepseek-v3.2:cloud
+  model: ollama-cloud/glm-5.1:cloud
   timeoutSeconds: 64800  # 18 hours max for full pipeline
 
 agents:
@@ -77,7 +77,7 @@ agents:
       baseDir: agents/complexity-assessor
       files:
         AGENTS.md: agents/complexity-assessor/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/glm-5.1:cloud
 
   - id: pipeline-controller
     name: Pipeline Controller
@@ -86,7 +86,7 @@ agents:
       baseDir: agents/pipeline-controller
       files:
         AGENTS.md: agents/pipeline-controller/AGENTS.md
-    model: ollama-cloud/deepseek-v3.2:cloud
+    model: ollama-cloud/glm-5.1:cloud
 
   - id: gate-keeper
     name: Gate Keeper
@@ -95,7 +95,7 @@ agents:
       baseDir: agents/gate-keeper
       files:
         AGENTS.md: agents/gate-keeper/AGENTS.md
-    model: ollama-cloud/glm-5:cloud
+    model: ollama-cloud/glm-5.1:cloud
 
   - id: pipeline-reporter
     name: Pipeline Reporter
@@ -113,7 +113,7 @@ agents:
       baseDir: agents/retrospective
       files:
         AGENTS.md: agents/retrospective/AGENTS.md
-    model: ollama-cloud/deepseek-v3.2:cloud
+    model: ollama-cloud/glm-5.1:cloud
 
 steps:
   # ═══════════════════════════════════════════════════════════
@@ -121,7 +121,7 @@ steps:
   # ═══════════════════════════════════════════════════════════
   - id: assess-complexity
     agent: complexity-assessor
-    timeout_minutes: 25
+    timeout_minutes: 2
     expects: 'TIER:'
     timeoutSeconds: 120
     max_retries: 1
@@ -144,7 +144,8 @@ steps:
   - id: dispatch-requirements
     agent: pipeline-controller
     depends_on: [assess-complexity]
-    timeout_minutes: 25
+    condition: "{{ steps.assess-complexity.SKIP_PHASES }} not contains 'requirements'"
+    timeout_minutes: 100
     expects: 'REQUIREMENTS_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -185,7 +186,8 @@ steps:
   - id: gate-requirements
     agent: gate-keeper
     depends_on: [dispatch-requirements]
-    timeout_minutes: 25
+    condition: "{{ steps.assess-complexity.SKIP_PHASES }} not contains 'requirements'"
+    timeout_minutes: 30
     expects: 'GATE_STATUS:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -215,7 +217,8 @@ steps:
   - id: dispatch-architecture
     agent: pipeline-controller
     depends_on: [gate-requirements]
-    timeout_minutes: 25
+    condition: "{{ steps.assess-complexity.SKIP_PHASES }} not contains 'architecture'"
+    timeout_minutes: 100
     expects: 'ARCHITECTURE_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -257,7 +260,8 @@ steps:
   - id: gate-architecture
     agent: gate-keeper
     depends_on: [dispatch-architecture]
-    timeout_minutes: 25
+    condition: "{{ steps.assess-complexity.SKIP_PHASES }} not contains 'architecture'"
+    timeout_minutes: 30
     expects: 'GATE_STATUS:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -287,7 +291,8 @@ steps:
   - id: dispatch-implementation
     agent: pipeline-controller
     depends_on: [gate-architecture]
-    timeout_minutes: 25
+    condition: "{{ steps.assess-complexity.SKIP_PHASES }} not contains 'implementation'"
+    timeout_minutes: 100
     expects: 'IMPLEMENTATION_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -326,7 +331,8 @@ steps:
   - id: dispatch-review
     agent: pipeline-controller
     depends_on: [dispatch-implementation]
-    timeout_minutes: 25
+    condition: "{{ steps.assess-complexity.SKIP_PHASES }} not contains 'review'"
+    timeout_minutes: 100
     expects: 'REVIEW_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -368,7 +374,8 @@ steps:
   - id: dispatch-fix
     agent: pipeline-controller
     depends_on: [dispatch-review]
-    timeout_minutes: 25
+    condition: "{{ steps.assess-complexity.SKIP_PHASES }} not contains 'fix'"
+    timeout_minutes: 100
     expects: 'FIX_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -406,7 +413,8 @@ steps:
   - id: dispatch-qa
     agent: pipeline-controller
     depends_on: [dispatch-fix]
-    timeout_minutes: 25
+    condition: "{{ steps.assess-complexity.SKIP_PHASES }} not contains 'qa'"
+    timeout_minutes: 100
     expects: 'QA_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -467,7 +475,8 @@ steps:
   - id: dispatch-release
     agent: pipeline-controller
     depends_on: [dispatch-qa]
-    timeout_minutes: 25
+    condition: "{{ steps.assess-complexity.SKIP_PHASES }} not contains 'release'"
+    timeout_minutes: 100
     expects: 'RELEASE_DONE:'
     timeoutSeconds: 6000
     max_retries: 2
@@ -513,7 +522,7 @@ steps:
   - id: final-report
     agent: pipeline-reporter
     depends_on: [dispatch-release]
-    timeout_minutes: 25
+    timeout_minutes: 30
     expects: 'PIPELINE_REPORT:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -556,7 +565,7 @@ steps:
   - id: retrospective
     agent: retrospective
     depends_on: [final-report]
-    timeout_minutes: 25
+    timeout_minutes: 30
     expects: 'RETRO_STATUS:'
     timeoutSeconds: 1800
     max_retries: 2
@@ -592,8 +601,6 @@ steps:
 
 hooks:
   onSuccess:
-    - run: echo "[pipeline-orchestrator v2.0] ✅ SDLC pipeline completed for {{ repo_name }} on {{ branch }}"
-    - run: echo "[pipeline-orchestrator v2.0] Tier: {{ steps.assess-complexity.summary }} | QA: {{ steps.dispatch-qa.summary }}"
+    - run: 'echo "[pipeline-orchestrator v2.0] SDLC pipeline completed"'
   onFailure:
-    - run: echo "[pipeline-orchestrator v2.0] ❌ Pipeline FAILED for {{ repo_name }} on {{ branch }}"
-    - run: echo "[pipeline-orchestrator v2.0] Failed at step: ${FAILED_STEP:-unknown}"
+    - run: 'echo "[pipeline-orchestrator v2.0] Pipeline FAILED"'
