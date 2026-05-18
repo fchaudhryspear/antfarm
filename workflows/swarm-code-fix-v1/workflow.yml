@@ -130,7 +130,7 @@ agents:
       baseDir: agents/fix-ux
       files:
         AGENTS.md: agents/fix-ux/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/kimi-k2.6:cloud
     delivery:
       channel: telegram
 
@@ -152,7 +152,7 @@ agents:
       baseDir: agents/fix-frontend
       files:
         AGENTS.md: agents/fix-frontend/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/kimi-k2.6:cloud
     delivery:
       channel: telegram
 

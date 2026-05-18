@@ -77,7 +77,7 @@ agents:
       baseDir: agents/ux-flow-designer
       files:
         AGENTS.md: agents/ux-flow-designer/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/kimi-k2.6:cloud
     delivery:
       channel: telegram
 

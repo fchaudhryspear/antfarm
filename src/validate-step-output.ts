@@ -119,6 +119,9 @@ export function validateContractAndDispatch(
   isDispatch: boolean = false,
 ): ContractValidationResult {
   const presentKeys = new Set(parseOutputKeys(output));
+  const swarmStatus = isDispatch && presentKeys.has("SWARM_STATUS")
+    ? normalizeSwarmStatus(extractOutputValue(output, "SWARM_STATUS"))
+    : undefined;
   
   // 1. Validate expects contract
   const expectedKeys = parseExpects(expectsField);
@@ -127,10 +130,6 @@ export function validateContractAndDispatch(
   // 2. Validate SWARM_STATUS for dispatch outputs
   let swarmStatusInvalid = false;
   if (isDispatch) {
-    const swarmStatus = presentKeys.has("SWARM_STATUS") 
-      ? extractOutputValue(output, "SWARM_STATUS")?.toLowerCase()
-      : undefined;
-    
     // Valid states: "completed" (sub-swarm finished), "skipped" (Tier 1 skip),
     // "dispatched" (sub-swarm polling), "running" (sub-swarm still in progress)
     // Both "dispatched" and "running" mean the controller has spawned a sub-swarm
@@ -141,15 +140,19 @@ export function validateContractAndDispatch(
       swarmStatusInvalid = true;
     }
   }
+
+  // Dispatch steps can submit polling progress before their final *_DONE key
+  // exists. completeStep() stores that output and leaves the step running.
+  const dispatchStillPolling = isDispatch && (swarmStatus === "dispatched" || swarmStatus === "running");
   
   // Build result
-  if (missingExpects.length > 0) {
+  if (missingExpects.length > 0 && !dispatchStillPolling) {
     return {
       valid: false,
       missingExpects,
       swarmStatusInvalid: isDispatch ? swarmStatusInvalid : undefined,
       reason: `Missing expected output keys: ${missingExpects.join(", ")}` + 
-              (swarmStatusInvalid ? "; SWARM_STATUS must be 'completed' or 'skipped'" : ""),
+              (swarmStatusInvalid ? "; SWARM_STATUS must be 'completed', 'skipped', 'dispatched', 'running', or 'blocked'" : ""),
     };
   }
   
@@ -206,11 +209,15 @@ function parseOutputKeys(output: string): string[] {
 }
 
 function normalizeContractKey(key: string): string {
-  return key.trim().replace(/:+$/, "").toUpperCase();
+  return key.trim().split(":")[0].trim().toUpperCase();
 }
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeSwarmStatus(value: string | undefined): string | undefined {
+  return value?.trim().toLowerCase().match(/^[a-z_-]+/)?.[0];
 }
 
 export { SCHEMA_REQUIRED_FIELDS };

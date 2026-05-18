@@ -395,7 +395,7 @@ If abandoned > 5 times → step fails → run fails.
 |-------|----------|---------|
 | `glm-5.1:cloud` | Business logic, decisions, gates | pipeline-controller, gate-keeper, api-designer |
 | `qwen3.5:397b-cloud` | Large context, docs, review | Most code-review-v3 agents |
-| `kimi-k2.5:cloud` | Reasoning, UX, frontend | ux-specialist, backend-architect |
+| `kimi-k2.6:cloud` | Reasoning, UX, frontend | ux-specialist, backend-architect |
 | `qwen3-coder-next:cloud` | Fast coding, scaffolding | fix-code-quality, fix-tests, regression-checker |
 | `qwen3-coder:480b-cloud` | Heavy coding, complex logic | fix-frontend |
 | `deepseek-v3.2:cloud` | General analysis, compilation | consolidate |
@@ -404,16 +404,16 @@ If abandoned > 5 times → step fails → run fails.
 
 ### Escalation Chain (Two-Tier)
 ```
-Tier 1: Ollama Cloud → kimi-k2.5
-  qwen3.5:397b  → kimi-k2.5
-  deepseek-v3.2  → kimi-k2.5
-  devstral-2     → kimi-k2.5
-  minimax-m2.7   → kimi-k2.5
-  qwen3-coder-next → kimi-k2.5
-  glm-5.1        → kimi-k2.5
+Tier 1: Ollama Cloud → kimi-k2.6
+  qwen3.5:397b  → kimi-k2.6
+  deepseek-v3.2  → kimi-k2.6
+  devstral-2     → kimi-k2.6
+  minimax-m2.7   → kimi-k2.6
+  qwen3-coder-next → kimi-k2.6
+  glm-5.1        → kimi-k2.6
 
-Tier 2: kimi-k2.5 → OpenAI Codex chain
-  kimi-k2.5      → gpt-5.4-mini
+Tier 2: kimi-k2.6 → OpenAI Codex chain
+  kimi-k2.6      → gpt-5.4-mini
   gpt-5.4-mini   → gpt-5.1
   gpt-5.1        → gpt-5.1-codex-max
   gpt-5.1-codex-max → gpt-5.2
@@ -558,8 +558,8 @@ If the session dies without calling `step complete`, the trap auto-fails the ste
 | code-quality | qwen3.5:397b | review |
 | security-auditor | devstral-2:123b | security scanning |
 | performance-engineer | qwen3.5:397b | review |
-| ux-specialist | kimi-k2.5 | UX analysis |
-| backend-architect | kimi-k2.5 | architecture review |
+| ux-specialist | kimi-k2.6 | UX analysis |
+| backend-architect | kimi-k2.6 | architecture review |
 | frontend-architect | qwen3.5:397b | review |
 | devops-engineer | qwen3.5:397b | review |
 | documentation-specialist | qwen3.5:397b | review |
@@ -574,9 +574,9 @@ If the session dies without calling `step complete`, the trap auto-fails the ste
 | fix-code-quality | qwen3-coder-next | coding |
 | fix-security | devstral-2:123b | security fixes |
 | fix-performance | minimax-m2.7 | perf optimization |
-| fix-ux | kimi-k2.5 | UX fixes |
+| fix-ux | kimi-k2.6 | UX fixes |
 | fix-backend | qwen3-coder:480b | heavy backend coding |
-| fix-frontend | kimi-k2.5 | frontend fixes |
+| fix-frontend | kimi-k2.6 | frontend fixes |
 | fix-devops | qwen3-coder-next | infra/devops |
 | fix-docs | qwen3.5:397b | documentation |
 | fix-tests | qwen3-coder-next | test writing |

@@ -91,7 +91,7 @@ agents:
       baseDir: agents/frontend-engineer-a
       files:
         AGENTS.md: agents/frontend-engineer-a/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/kimi-k2.6:cloud
     delivery:
       channel: telegram
     name: Frontend Engineer A
@@ -102,7 +102,7 @@ agents:
       baseDir: agents/frontend-engineer-b
       files:
         AGENTS.md: agents/frontend-engineer-b/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/kimi-k2.6:cloud
     delivery:
       channel: telegram
     name: Frontend Engineer B
@@ -135,8 +135,9 @@ steps:
       YOUR JOB:
       1. cd {{ repo_path }}
       2. git checkout {{ branch }} && git pull origin {{ branch }}
-      3. Read the architecture spec at {{ arch_path }} — it defines ALL tables, infra, and config needed
-      4. Read the PRD at {{ prd_path }} — it defines the feature requirements
+      3. If {{ arch_path }} is a real file path, read it — it defines ALL tables, infra, and config needed
+      4. If {{ prd_path }} is a real file path, read it — it defines the feature requirements
+      5. If either artifact is "skipped", empty, or missing, treat this as a Tier 1/no-op-capable task and infer the smallest safe foundation work directly from TASK and the existing repo.
 
       PHASE 1 SCOPE (Foundation):
       - Database migrations for any new tables/views/indexes defined in the arch spec
@@ -150,7 +151,9 @@ steps:
       - Match existing code style, naming conventions, and directory structure
       - After EACH file: git add <file> && git commit -m "feat(<scope>): <description>"
       - After all tasks: git push origin {{ branch }}
-      - Reply with STATUS: done and list of files created
+      - If there is no foundation/scaffold work to do, make no code changes and report that explicitly
+      - Your final response must include a standalone line exactly: STATUS: done
+      - Also list files created/modified, or FILES_MODIFIED: none
 
     expects: "STATUS: done"
     max_retries: 2

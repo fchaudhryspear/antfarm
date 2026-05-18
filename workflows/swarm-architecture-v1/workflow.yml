@@ -90,7 +90,7 @@ agents:
       baseDir: agents/frontend-architect
       files:
         AGENTS.md: agents/frontend-architect/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/kimi-k2.6:cloud
     delivery:
       channel: telegram
   - id: devops-architect
@@ -110,7 +110,7 @@ agents:
       baseDir: agents/visual-designer
       files:
         AGENTS.md: agents/visual-designer/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/kimi-k2.6:cloud
     delivery:
       channel: telegram
   - id: arch-compiler

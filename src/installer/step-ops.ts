@@ -21,34 +21,34 @@ import { validateConsolidateInputs } from "../validate-consolidate-inputs.js";
 import { recordAgentRun, recordAgentRetry, getAgentStats } from "../agent-retry-stats.js";
 
 // ── Model Escalation on Retry ───────────────────────────────────────
-// Two-tier escalation: Ollama Cloud → Anthropic Claude (April 16, 2026).
-// Tier 1 (Ollama Cloud): most models escalate to kimi-k2.5:cloud.
-// Tier 2 (Anthropic): kimi-k2.5 escalates to Claude Sonnet → Claude Opus.
-// Codex chain REMOVED — OpenAI Codex provider is broken (requires browser OAuth, not API keys).
-// Terminal (no further escalation): anthropic/claude-opus-4-6, ollama-cloud/kimi-k2.5:cloud.
+// OpenClaw ops policy (May 10, 2026): do not route automatic retries to
+// Anthropic Claude while anthropic:claude-cli is expired/non-interactive.
+// Most models escalate to kimi-k2.6:cloud. Kimi is terminal.
+// Stale Claude escalated_model values recover back to kimi instead of failing.
 const ESCALATION_MAP: Record<string, string[]> = {
-  // ── Tier 1: Ollama Cloud → kimi-k2.5 ────────────────────────────────
-  "ollama-cloud/qwen3.5:397b-cloud": ["ollama-cloud/kimi-k2.5:cloud"],
-  "ollama-cloud/deepseek-v3.2:cloud": ["ollama-cloud/kimi-k2.5:cloud"],
-  "ollama-cloud/nemotron-3-super:cloud": ["ollama-cloud/kimi-k2.5:cloud"],
-  "minimax-m2.7": ["ollama-cloud/kimi-k2.5:cloud"],
-  "ollama-cloud/devstral-2:123b-cloud": ["ollama-cloud/kimi-k2.5:cloud"],
-  "ollama-cloud/gemini-3-flash-preview:cloud": ["ollama-cloud/kimi-k2.5:cloud"],
-  "ollama-cloud/mistral-large-3:675b-cloud": ["ollama-cloud/kimi-k2.5:cloud"],
-  "ollama-cloud/qwen3-coder-next:cloud": ["ollama-cloud/kimi-k2.5:cloud"],
-  "ollama-cloud/glm-5:cloud": ["ollama-cloud/kimi-k2.5:cloud"],
-  // ── Tier 2: Anthropic Claude ────────────────────────────────────────
-  "ollama-cloud/kimi-k2.5:cloud": ["anthropic/claude-sonnet-4-6"],
-  "anthropic/claude-sonnet-4-6": ["anthropic/claude-opus-4-6"],
-  // Terminal — no further escalation
-  "anthropic/claude-opus-4-6": [],
-  // ── Deprecated Codex models (kept for backward compat, redirect to Claude) ──
-  "openai-codex/gpt-5.4-mini": ["anthropic/claude-sonnet-4-6"],
-  "openai-codex/gpt-5.1": ["anthropic/claude-sonnet-4-6"],
-  "openai-codex/gpt-5.1-codex-max": ["anthropic/claude-sonnet-4-6"],
-  "openai-codex/gpt-5.2": ["anthropic/claude-sonnet-4-6"],
-  "openai-codex/gpt-5.4": ["anthropic/claude-sonnet-4-6"],
-  "default": ["ollama-cloud/kimi-k2.5:cloud"],
+  // ── Tier 1: available providers → kimi-k2.6 ─────────────────────────
+  "ollama-cloud/qwen3.5:397b-cloud": ["ollama-cloud/kimi-k2.6:cloud"],
+  "ollama-cloud/deepseek-v3.2:cloud": ["ollama-cloud/kimi-k2.6:cloud"],
+  "ollama-cloud/nemotron-3-super:cloud": ["ollama-cloud/kimi-k2.6:cloud"],
+  "minimax-m2.7": ["ollama-cloud/kimi-k2.6:cloud"],
+  "ollama-cloud/devstral-2:123b-cloud": ["ollama-cloud/kimi-k2.6:cloud"],
+  "ollama-cloud/gemini-3-flash-preview:cloud": ["ollama-cloud/kimi-k2.6:cloud"],
+  "ollama-cloud/mistral-large-3:675b-cloud": ["ollama-cloud/kimi-k2.6:cloud"],
+  "ollama-cloud/qwen3-coder-next:cloud": ["ollama-cloud/kimi-k2.6:cloud"],
+  "ollama-cloud/glm-5:cloud": ["ollama-cloud/kimi-k2.6:cloud"],
+  // Terminal healthy fallback — no further escalation.
+  "ollama-cloud/kimi-k2.6:cloud": [],
+  // Legacy/stale Claude states recover to a healthy non-Claude model.
+  "anthropic/claude-sonnet-4-6": ["ollama-cloud/kimi-k2.6:cloud"],
+  "anthropic/claude-opus-4-6": ["ollama-cloud/kimi-k2.6:cloud"],
+  // Codex retries fall back to kimi when they time out.
+  "openai-codex/gpt-5.5": ["ollama-cloud/kimi-k2.6:cloud"],
+  "openai-codex/gpt-5.4-mini": ["ollama-cloud/kimi-k2.6:cloud"],
+  "openai-codex/gpt-5.1": ["ollama-cloud/kimi-k2.6:cloud"],
+  "openai-codex/gpt-5.1-codex-max": ["ollama-cloud/kimi-k2.6:cloud"],
+  "openai-codex/gpt-5.2": ["ollama-cloud/kimi-k2.6:cloud"],
+  "openai-codex/gpt-5.4": ["ollama-cloud/kimi-k2.6:cloud"],
+  "default": ["ollama-cloud/kimi-k2.6:cloud"],
 };
 
 /**
@@ -58,8 +58,8 @@ const ESCALATION_MAP: Record<string, string[]> = {
  */
 function getEscalatedModel(currentModel: string | null, attemptNumber: number = 1): string | null {
   if (!currentModel) {
-    // First escalation — default to kimi-k2.5:cloud (safe Ollama Cloud model).
-    return "ollama-cloud/kimi-k2.5:cloud";
+    // First escalation — default to kimi-k2.6:cloud (safe Ollama Cloud model).
+    return "ollama-cloud/kimi-k2.6:cloud";
   }
   const chain = ESCALATION_MAP[currentModel] ?? ESCALATION_MAP["default"] ?? [];
   // attemptNumber 1 after first escalation = chain[0], etc.
@@ -181,11 +181,11 @@ export function parseOutputKeyValues(output: string): Record<string, string> {
   }
 
   for (const line of lines) {
-    const match = line.match(/^([A-Z][A-Z0-9_]*):\s*(.*)$/);
+    const match = line.match(/^\s*([A-Za-z][A-Za-z0-9_]*):\s*(.*)$/);
     if (match) {
       // New KEY: line found — flush previous key
       commitPending();
-      pendingKey = match[1];
+      pendingKey = match[1].toUpperCase();
       pendingValue = match[2];
     } else if (pendingKey) {
       // Continuation line — append to current key's value
@@ -196,6 +196,10 @@ export function parseOutputKeyValues(output: string): Record<string, string> {
   commitPending();
 
   return result;
+}
+
+function normalizeOutputStatus(value: string | undefined): string | undefined {
+  return value?.trim().toLowerCase().match(/^[a-z_-]+/)?.[0];
 }
 
 /**
@@ -1286,7 +1290,7 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
   // SWARM_STATUS: blocked is a terminal state (QA failure after max cycles) — mark done
   if (step.step_id.includes("dispatch") && contractResult.valid) {
     const parsed = parseOutputKeyValues(output);
-    const swarmStatus = parsed["SWARM_STATUS"]?.toLowerCase();
+    const swarmStatus = normalizeOutputStatus(parsed["SWARM_STATUS"]);
     if (swarmStatus === "dispatched" || swarmStatus === "running") {
       logger.info(`Dispatch step ${step.step_id} reports SWARM_STATUS: ${swarmStatus} — keeping in running state for sub-swarm polling`, { runId: step.run_id, stepId: step.step_id });
       // Save output for context but don't complete — cron will re-claim and poll again

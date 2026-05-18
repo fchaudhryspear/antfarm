@@ -7,8 +7,21 @@ describe("validateContractAndDispatch", () => {
     assert.deepEqual(parseExpects("TIER:, SCORE:"), ["TIER", "SCORE"]);
   });
 
+  it("normalizes expects keys that include example values", () => {
+    assert.deepEqual(parseExpects("STATUS: done"), ["STATUS"]);
+  });
+
   it("accepts expected keys case-insensitively", () => {
     const result = validateContractAndDispatch("tier: 2", "TIER:");
+    assert.equal(result.valid, true);
+  });
+
+  it("allows dispatch polling output before the final done key exists", () => {
+    const result = validateContractAndDispatch(
+      "SWARM_STATUS: running (dispatched swarm-implement-v1 #437)",
+      "IMPLEMENTATION_DONE:",
+      true,
+    );
     assert.equal(result.valid, true);
   });
 

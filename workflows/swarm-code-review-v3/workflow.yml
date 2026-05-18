@@ -5,8 +5,8 @@ workflow_objective: Comprehensive parallel codebase review using 10 specialized 
   with structured output and parameterized scope.
 description: 'Parallel variant of the swarm code review. All 10 review agents launch simultaneously.
   Only the consolidate step waits for all 10 via depends_on (v3.4).
-  v3.5: Model reliability swap — minimax-m2.7 (4 agents) + kimi-k2.5 (frontend) → qwen3.5:397b-cloud based on Run #321 retry data.
-  v3.4: Upgraded security-auditor, backend-architect, testing-strategist to kimi-k2.5 for deeper analysis.
+  v3.5: Model reliability swap — minimax-m2.7 (4 agents) + kimi-k2.6 (frontend) → qwen3.5:397b-cloud based on Run #321 retry data.
+  v3.4: Upgraded security-auditor, backend-architect, testing-strategist to kimi-k2.6 for deeper analysis.
   v3.3 fixes: project-agnostic context, comprehensive exclude patterns in all agents (Bug #22).
   v3.2 fixes: explicit filesystem nav, anti-drift clauses, absolute repo path, output size guardrails.'
 context:
@@ -70,7 +70,7 @@ agents:
     baseDir: agents/ux-specialist
     files:
       AGENTS.md: agents/ux-specialist/AGENTS.md
-  model: ollama-cloud/kimi-k2.5:cloud
+  model: ollama-cloud/kimi-k2.6:cloud
   delivery:
     channel: telegram
 - id: backend-architect

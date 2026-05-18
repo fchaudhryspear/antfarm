@@ -130,8 +130,8 @@ Current model allocation:
 - code-quality: `ollama-cloud/qwen3.5:397b-cloud`
 - security-auditor: `ollama-cloud/devstral-2:123b-cloud`
 - performance-engineer: `ollama-cloud/qwen3.5:397b-cloud`
-- ux-specialist: `ollama-cloud/kimi-k2.5:cloud`
-- backend-architect: `ollama-cloud/kimi-k2.5:cloud`
+- ux-specialist: `ollama-cloud/kimi-k2.6:cloud`
+- backend-architect: `ollama-cloud/kimi-k2.6:cloud`
 - frontend-architect: `ollama-cloud/qwen3.5:397b-cloud`
 - devops-engineer: `ollama-cloud/qwen3.5:397b-cloud`
 - documentation-specialist: `ollama-cloud/qwen3.5:397b-cloud`
