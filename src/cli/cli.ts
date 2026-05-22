@@ -96,7 +96,7 @@ function printUsage() {
       "antfarm workflow uninstall <name>    Uninstall a workflow (blocked if runs active)",
       "antfarm workflow uninstall --all     Uninstall all workflows (--force to override)",
       "antfarm workflow validate <name>     Validate workflow.yml output contracts (preflight check)",
-      "antfarm workflow run <name> <task>   Start a workflow run",
+      "antfarm workflow run <name> <task>   Start a workflow run (--force-tier=1|2|3 --repo-path=... --context key=val)",
       "antfarm workflow status <query>      Check run status (task substring, run ID prefix)",
       "antfarm workflow runs                List all workflow runs",
       "antfarm workflow resume <run-id>     Resume a failed run from where it left off",
@@ -827,6 +827,18 @@ async function main() {
       const val = extractFlag(runArgs[nuIdx]);
       notifyUrl = val ?? runArgs[nuIdx + 1];
       runArgs.splice(nuIdx, val ? 1 : 2);
+    }
+    const ftIdx = runArgs.findIndex(a => a === "--force-tier" || a.startsWith("--force-tier="));
+    if (ftIdx !== -1) {
+      const val = extractFlag(runArgs[ftIdx]);
+      const forceTier = val ?? runArgs[ftIdx + 1];
+      if (forceTier && ["1", "2", "3"].includes(forceTier)) {
+        contextArgs["force_tier"] = forceTier;
+      } else {
+        process.stderr.write(`Invalid --force-tier value: ${forceTier}. Must be 1, 2, or 3.\n`);
+        process.exit(1);
+      }
+      runArgs.splice(ftIdx, val ? 1 : 2);
     }
     const taskTitle = runArgs.join(" ").trim();
     if (!taskTitle) { process.stderr.write("Missing task title.\n"); printUsage(); process.exit(1); }

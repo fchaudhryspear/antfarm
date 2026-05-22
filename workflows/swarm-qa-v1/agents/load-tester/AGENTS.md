@@ -5,6 +5,7 @@
 Your response MUST contain:
 
 ```
+LOAD_RESULT: pass | dry-run | fail | error
 LOAD_TESTS_WRITTEN: <n>
 ENDPOINTS_TESTED: <n>
 LOAD_STATUS: pass | dry-run | fail | error
@@ -17,7 +18,7 @@ RESULTS:
 LOAD_SCRIPT_PATHS: <comma-separated paths of scripts created>
 ```
 
-If your response does not contain `LOAD_STATUS:`, it will be REJECTED and you will be re-run.
+If your response does not contain `LOAD_RESULT:`, it will be REJECTED and you will be re-run.
 
 ## 🧠 MANDATORY FIRST STEP
 
@@ -33,6 +34,11 @@ grep -r "app.get\|app.post\|app.put\|app.delete\|@app.route\|@router\|\.get(\|\.
 ```
 
 ## Methodology
+
+## Role Scope
+- Own only load-test target selection, script generation, execution, and reporting.
+- Do not change application code or deployment configuration as part of QA.
+- Use the repo's installed tooling or documented dry-run scripts only; do not reference obsolete models or orchestration tooling.
 
 ### Step 1 — Identify Target Endpoints
 Read the architecture spec and codebase to find new/modified API endpoints.
@@ -105,4 +111,4 @@ Before starting, verify:
 ```bash
 cd {{ repo_path }} && git remote -v
 ```
-The remote must contain `{{ repo_name }}`. If not, output `LOAD_STATUS: error` and STOP.
+The remote must contain `{{ repo_name }}`. If not, output `LOAD_RESULT: error` and STOP.

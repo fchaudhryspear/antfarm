@@ -13,7 +13,7 @@ description: |
     - Task 11: verify=true enabled by default; post-review bounded to max 20 files/domain,
       5 findings/domain, top-50 sampling by priority order; Issue #81 workaround applied.
   v1.5: Precision fixes from review:
-    - Fix 1: qwen-plus → minimax-m2.7:cloud for docs/ux/product (qwen-plus unproven in antfarm)
+    - Fix 1: qwen-plus → ollama-cloud/glm-5.1:cloud for docs/ux/product (qwen-plus unproven in antfarm)
     - Fix 2: STATUS:partial for multi-file fixes (revert only failing file, not entire fix)
     - Fix 3: post-review scoped to changed domains only, not all changed files
   v1.4: Issue 6 — post-consolidation re-review loop properly wired as a real workflow step.
@@ -73,7 +73,7 @@ acceptance_criteria:
   - "If verify=true: post-review step runs against changed files only; outputs VERIFY_STATUS"
 
 polling:
-  model: ollama-cloud/deepseek-v3.2:cloud
+  model: ollama-cloud/glm-5.1:cloud
   delivery:
     channel: telegram
   timeoutSeconds: 7200
@@ -108,7 +108,7 @@ agents:
       baseDir: agents/fix-security
       files:
         AGENTS.md: agents/fix-security/AGENTS.md
-    model: ollama-cloud/deepseek-v3.2:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
 
@@ -119,7 +119,7 @@ agents:
       baseDir: agents/fix-performance
       files:
         AGENTS.md: agents/fix-performance/AGENTS.md
-    model: ollama-cloud/minimax-m2.7:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
 
@@ -130,7 +130,7 @@ agents:
       baseDir: agents/fix-ux
       files:
         AGENTS.md: agents/fix-ux/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/kimi-k2.6:cloud
     delivery:
       channel: telegram
 
@@ -152,7 +152,7 @@ agents:
       baseDir: agents/fix-frontend
       files:
         AGENTS.md: agents/fix-frontend/AGENTS.md
-    model: ollama-cloud/kimi-k2.5:cloud
+    model: ollama-cloud/kimi-k2.6:cloud
     delivery:
       channel: telegram
 
@@ -207,7 +207,7 @@ agents:
       baseDir: agents/consolidate-pr
       files:
         AGENTS.md: agents/consolidate-pr/AGENTS.md
-    model: ollama-cloud/minimax-m2.7:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
 
@@ -218,17 +218,18 @@ agents:
       baseDir: agents/post-review
       files:
         AGENTS.md: agents/post-review/AGENTS.md
-    model: ollama-cloud/minimax-m2.7:cloud
+    model: ollama-cloud/glm-5.1:cloud
     delivery:
       channel: telegram
 
 steps:
   - id: setup
     agent: setup
-    timeout_minutes: 30
+    timeout_minutes: 5
     expects: 'SETUP_OK:'
     timeoutSeconds: 300
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -279,10 +280,11 @@ steps:
   - id: fix-code-quality
     agent: fix-code-quality
     depends_on: [setup]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -316,10 +318,11 @@ steps:
   - id: fix-security
     agent: fix-security
     depends_on: [setup]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -354,10 +357,11 @@ steps:
   - id: fix-performance
     agent: fix-performance
     depends_on: [setup]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -391,10 +395,11 @@ steps:
   - id: fix-ux
     agent: fix-ux
     depends_on: [setup]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -428,10 +433,11 @@ steps:
   - id: fix-backend
     agent: fix-backend
     depends_on: [setup]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -465,10 +471,11 @@ steps:
   - id: fix-frontend
     agent: fix-frontend
     depends_on: [setup]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -502,10 +509,11 @@ steps:
   - id: fix-devops
     agent: fix-devops
     depends_on: [setup]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -543,6 +551,7 @@ steps:
     expects: 'STATUS:'
     timeoutSeconds: 1800
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -573,10 +582,11 @@ steps:
   - id: fix-tests
     agent: fix-tests
     depends_on: [setup]
-    timeout_minutes: 30
+    timeout_minutes: 60
     expects: 'STATUS:'
     timeoutSeconds: 3600
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -613,6 +623,7 @@ steps:
     expects: 'STATUS:'
     timeoutSeconds: 1800
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: {{ task }}
       REPO_PATH: {{ repo_path }}
@@ -653,10 +664,11 @@ steps:
       - fix-docs
       - fix-tests
       - fix-product
-    timeout_minutes: 30
+    timeout_minutes: 45
     expects: 'PR_URL:'
     timeoutSeconds: 2700   # 45 min — allows bisect cycles
     max_retries: 2
+    on_fail: escalate_to_human
     input: |
       TASK: Consolidate all domain fixes into one PR with rollback safety and severity ordering.
       REPO_PATH: {{ repo_path }}
@@ -689,10 +701,11 @@ steps:
   - id: post-review
     agent: post-review
     depends_on: [consolidate-pr]
-    timeout_minutes: 25
+    timeout_minutes: 60
     expects: 'VERIFY_STATUS:'
     timeoutSeconds: 3600
     max_retries: 1
+    on_fail: escalate_to_human
     input: |
       TASK: Post-fix system-level review — check whether combined fixes introduced new issues.
       REPO_PATH: {{ repo_path }}

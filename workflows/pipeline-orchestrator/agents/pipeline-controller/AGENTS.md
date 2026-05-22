@@ -42,7 +42,7 @@ SWARM_DURATION: 1234
 
 For QA phase:
 ```
-QA_DONE: qa_report_path=/path/to/qa-report.md
+QA_DONE: qa_report_path=/path/to/qa-report.md qa_status=pass qa_cycles=1
 QA_STATUS: passed
 SWARM_STATUS: completed
 SWARM_DURATION: 1234
@@ -122,6 +122,16 @@ done
 
 Timeout: if polling exceeds 5400 seconds (90 minutes), output failure.
 
+### QA Backflow Loop Contract
+
+For `PHASE=qa`, maintain an integer `qa_cycles` counter:
+- Start with `qa_cycles=1` for the initial QA swarm dispatch.
+- If the first QA run returns a failing `GO_NO_GO` or failing `QA_STATUS`, extract the blocking issues, re-dispatch the fix swarm once, then re-dispatch the QA swarm once more with `qa_cycles=2`.
+- If cycle 2 still fails, STOP looping, escalate immediately, and output `QA_DONE:` with `qa_cycles=2`.
+- Never run a third QA cycle. `max_qa_cycles=2` is a hard ceiling.
+- Include `qa_cycles=<1|2>` in every successful or escalated `QA_DONE:` line.
+- Preserve the normal phase output contract: always include `QA_DONE:`, `QA_STATUS:`, `SWARM_STATUS:`, and `SWARM_DURATION:`.
+
 ### Step 4 — Extract Outputs
 
 After the sub-workflow completes, locate its output artifacts:
@@ -170,4 +180,9 @@ Emit the phase-specific completion marker with all extracted data.
 <PHASE_MARKER>: <key=value pairs>
 SWARM_STATUS: completed | failed
 SWARM_DURATION: <seconds>
+```
+
+For QA specifically, the first line MUST be:
+```
+QA_DONE: qa_report_path=<path> qa_status=<pass|fail> qa_cycles=<1|2>
 ```

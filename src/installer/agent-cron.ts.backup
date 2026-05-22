@@ -132,7 +132,7 @@ trap "bash $SESSION_TIMEOUT_HOOK; rm -f $SESSION_TIMEOUT_HOOK" EXIT
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
 
-const DEFAULT_POLLING_TIMEOUT_SECONDS = 1800; // 30 min — Phase A timeout tuning (was 600/10min)
+const DEFAULT_POLLING_TIMEOUT_SECONDS = 600; // 10 min — v4 fix for consolidate timeout (was 120)
 const DEFAULT_POLLING_MODEL = "default";
 
 function extractModel(value: unknown): string | undefined {
@@ -385,7 +385,7 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
 export async function teardownWorkflowCronsIfIdle(workflowId: string): Promise<void> {
   const db = getDb();
   
-  // Check ALL active runs across ALL workflows, not just this one
+  // Check ALL active runs across ALL workflows, not just this workflow
   const activeRuns = db.prepare(
     "SELECT COUNT(*) as count FROM runs WHERE status = 'running'"
   ).get() as { count: number } | undefined;
@@ -400,62 +400,4 @@ export async function teardownWorkflowCronsIfIdle(workflowId: string): Promise<v
   // Safe to teardown — no active runs anywhere
   log.debug(`No active runs — tearing down crons for workflow ${workflowId}`);
   await removeAgentCrons(workflowId);
-}
-
-/**
- * Disable (pause) all crons for a workflow when a run reaches terminal state.
- * Unlike teardown which deletes, this only disables — crons can be re-enabled via resumeWorkflowCrons.
- * This prevents wasted polling cycles on completed/failed runs.
- */
-export async function pauseWorkflowCrons(workflowId: string, reason: string): Promise<void> {
-  const prefix = `antfarm/${workflowId}/`;
-  const result = await listCronJobs();
-  if (!result.ok || !result.jobs) {
-    log.warn(`pauseWorkflowCrons: failed to list crons for ${workflowId}`);
-    return;
-  }
-
-  const matching = result.jobs.filter((j: { name: string; enabled?: boolean }) => j.name.startsWith(prefix));
-  if (matching.length === 0) {
-    log.debug(`pauseWorkflowCrons: no crons found for ${workflowId}`);
-    return;
-  }
-
-  for (const job of matching) {
-    try {
-      const { execSync } = await import("node:child_process");
-      execSync(`openclaw cron disable ${job.id}`, { stdio: "pipe" });
-      log.info(`Paused cron ${job.name} (reason: ${reason})`);
-    } catch (err) {
-      log.warn(`Failed to disable cron ${job.name}: ${err}`);
-    }
-  }
-}
-
-/**
- * Re-enable all crons for a workflow when a new run starts.
- */
-export async function resumeWorkflowCrons(workflowId: string): Promise<void> {
-  const prefix = `antfarm/${workflowId}/`;
-  const result = await listCronJobs();
-  if (!result.ok || !result.jobs) {
-    log.warn(`resumeWorkflowCrons: failed to list crons for ${workflowId}`);
-    return;
-  }
-
-  const matching = result.jobs.filter((j: { name: string; enabled?: boolean }) => j.name.startsWith(prefix) && j.enabled === false);
-  if (matching.length === 0) {
-    log.debug(`resumeWorkflowCrons: no disabled crons found for ${workflowId}`);
-    return;
-  }
-
-  for (const job of matching) {
-    try {
-      const { execSync } = await import("node:child_process");
-      execSync(`openclaw cron enable ${job.id}`, { stdio: "pipe" });
-      log.info(`Resumed cron ${job.name}`);
-    } catch (err) {
-      log.warn(`Failed to enable cron ${job.name}: ${err}`);
-    }
-  }
 }

@@ -5,6 +5,7 @@
 Your response MUST contain:
 
 ```
+REGRESSION_RESULT: clean | regressions-found | error
 REGRESSION_STATUS: clean | regressions-found | error
 TOTAL_TESTS: <n>
 PASSED: <n>
@@ -21,7 +22,7 @@ DELETED_TESTS:
     reason: "<why it might have been removed>"
 ```
 
-If your response does not contain `REGRESSION_STATUS:`, it will be REJECTED and you will be re-run.
+If your response does not contain `REGRESSION_RESULT:`, it will be REJECTED and you will be re-run.
 
 ## 🧠 MANDATORY FIRST STEP
 
@@ -36,6 +37,11 @@ echo "Baseline test count: {{ baseline_test_count }}"
 ```
 
 ## Methodology
+
+## Role Scope
+- Own only regression detection across existing and newly added tests on the target branch.
+- Do not author new tests or patch failing code.
+- Work only from repo state, git history, and standard test tooling; do not mention obsolete models or orchestration tooling.
 
 ### Step 1 — Establish Baseline
 Read `{{ baseline_test_count }}`. If it's "0" or empty:
@@ -111,4 +117,4 @@ Before starting, verify:
 ```bash
 cd {{ repo_path }} && git remote -v
 ```
-The remote must contain `{{ repo_name }}`. If not, output `REGRESSION_STATUS: error` and STOP.
+The remote must contain `{{ repo_name }}`. If not, output `REGRESSION_RESULT: error` and STOP.

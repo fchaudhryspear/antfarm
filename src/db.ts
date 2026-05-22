@@ -96,6 +96,10 @@ function migrate(db: DatabaseSync): void {
   if (!colNames.has("last_output_at")) {
     db.exec("ALTER TABLE steps ADD COLUMN last_output_at TEXT");
   }
+  // Issue #344: Per-step condition for Tier skip logic
+  if (!colNames.has("condition")) {
+    db.exec("ALTER TABLE steps ADD COLUMN condition TEXT");
+  }
 
   // Issue #343: Agent retry stats table for prompt tuning framework
   db.exec(`
@@ -104,6 +108,18 @@ function migrate(db: DatabaseSync): void {
       total_runs INTEGER NOT NULL DEFAULT 0,
       retries INTEGER NOT NULL DEFAULT 0,
       last_run_at TEXT,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
+  // Idle tick tracking for cron auto-disable
+  // After MAX_IDLE_TICKS consecutive NO_WORK results, the cron is disabled.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cron_idle_ticks (
+      agent_id TEXT PRIMARY KEY,
+      idle_ticks INTEGER NOT NULL DEFAULT 0,
+      last_work_at TEXT,
+      disabled_at TEXT,
       updated_at TEXT NOT NULL
     )
   `);
