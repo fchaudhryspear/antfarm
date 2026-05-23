@@ -47,6 +47,25 @@ describe("buildPollingPrompt", () => {
     assert.ok(prompt.includes("---END WORK PROMPT---"), "should delimit work prompt");
   });
 
+  it("includes a step-resolution guard for spawned workers", () => {
+    const prompt = buildPollingPrompt("feature-dev", "developer");
+    assert.ok(prompt.includes("Step-resolution guard"), "should include guard instructions");
+    assert.ok(prompt.includes("ANTFARM_STEP_RESOLVED"), "should include resolved marker");
+    assert.ok(prompt.includes("trap antfarm_step_exit_guard EXIT"), "should install exit trap");
+    assert.ok(
+      prompt.includes("Session ended without calling step complete or step fail"),
+      "should auto-fail unresolved sessions"
+    );
+    assert.ok(
+      prompt.includes('step complete "$STEP_ID" && touch "$ANTFARM_STEP_RESOLVED"'),
+      "completion command should mark the step as resolved"
+    );
+    assert.ok(
+      prompt.includes('step fail "$STEP_ID" "description of what went wrong" && touch "$ANTFARM_STEP_RESOLVED"'),
+      "failure command should mark the step as resolved"
+    );
+  });
+
   it("specifies the full model for the spawned task", () => {
     const prompt = buildPollingPrompt("feature-dev", "developer", "claude-opus-4-6");
     assert.ok(prompt.includes('"claude-opus-4-6"'), "should specify model for spawn");

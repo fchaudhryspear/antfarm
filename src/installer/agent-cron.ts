@@ -30,6 +30,26 @@ If output contains "running" or "done", reply HEARTBEAT_OK and stop. Do NOT call
 }
 const DEFAULT_AGENT_TIMEOUT_SECONDS = 30 * 60; // 30 minutes
 
+function buildStepResolutionGuard(cli: string): string {
+  return `Step-resolution guard — run this BEFORE doing the work, after replacing <stepId> with the claimed stepId:
+\`\`\`
+STEP_ID="<stepId>"
+ANTFARM_STEP_RESOLVED=$(mktemp)
+rm -f "$ANTFARM_STEP_RESOLVED"
+antfarm_step_exit_guard() {
+  if [ ! -f "$ANTFARM_STEP_RESOLVED" ]; then
+    node ${cli} step fail "$STEP_ID" "Session ended without calling step complete or step fail"
+  fi
+}
+trap antfarm_step_exit_guard EXIT
+\`\`\`
+
+After a successful step complete or step fail command, create the resolved marker:
+\`\`\`
+touch "$ANTFARM_STEP_RESOLVED"
+\`\`\``;
+}
+
 function buildAgentPrompt(workflowId: string, agentId: string): string {
   const fullAgentId = `${workflowId}_${agentId}`;
   const cli = resolveAntfarmCli();
@@ -52,7 +72,7 @@ The "input" field contains your FULLY RESOLVED task instructions. Read it carefu
 Step 3 — Do the work described in the input. Format your output with KEY: value lines as specified.
 
 Step 4 — MANDATORY: Report completion (do this IMMEDIATELY after finishing the work).
-Your output MUST start with SCORE: on the first line. Read your AGENTS.md for the required format.
+Your output MUST start with SCORE: on the first line. Follow your agent instructions for the required format.
 \`\`\`
 cat <<'ANTFARM_EOF' > /tmp/antfarm-step-output.txt
 SCORE: [your score]/100
@@ -73,13 +93,7 @@ RULES:
 2. Write output to a file first, then pipe via stdin (shell escaping breaks direct args)
 3. If you're unsure whether to complete or fail, call step fail with an explanation
 
-// Fix #3 (RCA 322-325): Session timeout hook — register emergency exit handler.
-// If the session is killed (timeout, OOM, token limit), the shell will execute this on exit.
-SESSION_TIMEOUT_HOOK=$(mktemp)
-echo '#!/bin/bash' > "$SESSION_TIMEOUT_HOOK"
-echo "node ${cli} step fail '<stepId>' 'Session timeout — no output produced'" >> "$SESSION_TIMEOUT_HOOK"
-chmod +x "$SESSION_TIMEOUT_HOOK"
-trap "bash $SESSION_TIMEOUT_HOOK; rm -f $SESSION_TIMEOUT_HOOK" EXIT
+${buildStepResolutionGuard(cli)}
 
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
@@ -93,13 +107,15 @@ export function buildWorkPrompt(workflowId: string, agentId: string): string {
 ⚠️ CRITICAL: You MUST call "step complete" or "step fail" before ending your session. If you don't, the workflow will be stuck forever. This is non-negotiable.
 
 The claimed step JSON is provided below. It contains: {"stepId": "...", "runId": "...", "input": "..."}
-Save the stepId — you'll need it to report completion.
+Extract the stepId immediately and install the step-resolution guard before doing any other work.
 The "input" field contains your FULLY RESOLVED task instructions. Read it carefully and DO the work.
+
+${buildStepResolutionGuard(cli)}
 
 Do the work described in the input. Format your output with KEY: value lines as specified.
 
 MANDATORY: Report completion (do this IMMEDIATELY after finishing the work).
-Your output MUST start with SCORE: on the first line. Read your AGENTS.md for the required format.
+Your output MUST start with SCORE: on the first line. Follow your agent instructions for the required format.
 \`\`\`
 cat <<'ANTFARM_EOF' > /tmp/antfarm-step-output.txt
 SCORE: [your score]/100
@@ -107,27 +123,18 @@ FINDINGS: [number of findings]
 
 [your findings here]
 ANTFARM_EOF
-cat /tmp/antfarm-step-output.txt | node ${cli} step complete "<stepId>"
+cat /tmp/antfarm-step-output.txt | node ${cli} step complete "$STEP_ID" && touch "$ANTFARM_STEP_RESOLVED"
 \`\`\`
 
 If the work FAILED:
 \`\`\`
-node ${cli} step fail "<stepId>" "description of what went wrong"
+node ${cli} step fail "$STEP_ID" "description of what went wrong" && touch "$ANTFARM_STEP_RESOLVED"
 \`\`\`
 
 RULES:
 1. NEVER end your session without calling step complete or step fail
 2. Write output to a file first, then pipe via stdin (shell escaping breaks direct args)
 3. If you're unsure whether to complete or fail, call step fail with an explanation
-
-// Fix #3 (RCA 322-325): Session timeout hook — register emergency exit handler.
-// Parses stepId from the JSON you received, then sets a trap to auto-fail on session death.
-SESSION_TIMEOUT_HOOK=$(mktemp)
-STEP_ID=$(echo '<stepId>' | grep -oP '(?<=<)[^>]+(?=>)' || echo '<stepId>')
-echo '#!/bin/bash' > "$SESSION_TIMEOUT_HOOK"
-echo "node ${cli} step fail \"$STEP_ID\" 'Session timeout — no output produced'\"" >> "$SESSION_TIMEOUT_HOOK"
-chmod +x "$SESSION_TIMEOUT_HOOK"
-trap "bash $SESSION_TIMEOUT_HOOK; rm -f $SESSION_TIMEOUT_HOOK" EXIT
 
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
