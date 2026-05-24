@@ -178,6 +178,70 @@ export function migrateDb(db: DatabaseSync): void {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS rollback_plans (
+      id TEXT PRIMARY KEY,
+      factory_item_id TEXT NOT NULL REFERENCES factory_items(id) ON DELETE CASCADE,
+      factory_run_id TEXT REFERENCES factory_runs(id) ON DELETE SET NULL,
+      environment TEXT NOT NULL,
+      strategy TEXT NOT NULL,
+      trigger_conditions_json TEXT NOT NULL,
+      steps_json TEXT NOT NULL,
+      verification_json TEXT NOT NULL,
+      approvers_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS deployment_events (
+      id TEXT PRIMARY KEY,
+      factory_item_id TEXT NOT NULL REFERENCES factory_items(id) ON DELETE CASCADE,
+      factory_run_id TEXT REFERENCES factory_runs(id) ON DELETE SET NULL,
+      rollback_plan_id TEXT REFERENCES rollback_plans(id) ON DELETE SET NULL,
+      retry_of_deployment_event_id TEXT REFERENCES deployment_events(id) ON DELETE SET NULL,
+      environment TEXT NOT NULL,
+      commit_sha TEXT,
+      version TEXT,
+      status TEXT NOT NULL,
+      side_effecting_action INTEGER NOT NULL DEFAULT 1,
+      manual_approval_id TEXT,
+      failure_cause TEXT,
+      next_route TEXT NOT NULL,
+      evidence_url TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS smoke_test_runs (
+      id TEXT PRIMARY KEY,
+      factory_item_id TEXT NOT NULL REFERENCES factory_items(id) ON DELETE CASCADE,
+      factory_run_id TEXT REFERENCES factory_runs(id) ON DELETE SET NULL,
+      deployment_event_id TEXT REFERENCES deployment_events(id) ON DELETE SET NULL,
+      suite_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      failure_cause TEXT,
+      next_route TEXT NOT NULL,
+      evidence_url TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS monitoring_observations (
+      id TEXT PRIMARY KEY,
+      factory_item_id TEXT NOT NULL REFERENCES factory_items(id) ON DELETE CASCADE,
+      factory_run_id TEXT REFERENCES factory_runs(id) ON DELETE SET NULL,
+      deployment_event_id TEXT REFERENCES deployment_events(id) ON DELETE SET NULL,
+      status TEXT NOT NULL,
+      window_minutes INTEGER NOT NULL DEFAULT 15,
+      failure_cause TEXT,
+      next_route TEXT NOT NULL,
+      evidence_url TEXT,
+      observed_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_factory_items_status ON factory_items(status, lifecycle_stage);
     CREATE INDEX IF NOT EXISTS idx_factory_runs_item ON factory_runs(factory_item_id, status);
     CREATE INDEX IF NOT EXISTS idx_factory_context_packs_item ON factory_context_packs(factory_item_id, stage, agent_role);
@@ -186,6 +250,10 @@ export function migrateDb(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_factory_gates_item ON factory_gates(factory_item_id, gate_type);
     CREATE INDEX IF NOT EXISTS idx_factory_events_item ON factory_events(factory_item_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_obsidian_mirror_events_item ON obsidian_mirror_events(factory_item_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_rollback_plans_item ON rollback_plans(factory_item_id, environment, status);
+    CREATE INDEX IF NOT EXISTS idx_deployment_events_item ON deployment_events(factory_item_id, environment, created_at);
+    CREATE INDEX IF NOT EXISTS idx_smoke_test_runs_item ON smoke_test_runs(factory_item_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_monitoring_observations_item ON monitoring_observations(factory_item_id, created_at);
   `);
 
   // Add columns to steps table for backwards compat
