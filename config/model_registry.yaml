@@ -1,0 +1,86 @@
+version: 1
+policy:
+  unknown_model: fail_validation
+  inactive_statuses:
+    - deprecated
+
+families:
+  default:
+    canonical: default
+    aliases: []
+    status: active
+    strengths: [fallback_resolution]
+    allowed_roles: [polling]
+    allowed_workflow_stages: [polling]
+
+  glm51:
+    canonical: ollama-cloud/glm-5.1:cloud
+    aliases: [glm-5.1:cloud, GLM-5.1]
+    status: active
+    strengths: [orchestration, gates, structured_output, security, qa]
+    allowed_roles: [analysis, coding, verification, testing, pr, scanning, triage, orchestrator, gate, reporter, polling]
+    allowed_workflow_stages: [requirements, architecture, review, fix, implement, qa, release, pipeline, smoke, e2e-review, polling]
+
+  qwen35_397b:
+    canonical: ollama-cloud/qwen3.5:397b-cloud
+    aliases: [qwen3.5:397b-cloud, Qwen 3.5 397B]
+    status: active
+    strengths: [analysis, documentation, product, architecture, code_review]
+    allowed_roles: [analysis, coding, verification, testing, reporter]
+    allowed_workflow_stages: [requirements, architecture, review, fix, release, pipeline]
+
+  qwen3_coder_next:
+    canonical: ollama-cloud/qwen3-coder-next:cloud
+    aliases: [qwen3-coder-next:cloud, Qwen3-Coder-Next]
+    status: active
+    strengths: [coding, tests, scaffolding, devops]
+    allowed_roles: [coding, testing, pr]
+    allowed_workflow_stages: [fix, implement, qa, release]
+
+  qwen3_coder_480b:
+    canonical: ollama-cloud/qwen3-coder:480b-cloud
+    aliases: [qwen3-coder:480b-cloud, Qwen3-Coder 480B]
+    status: active
+    strengths: [backend_codegen, sustained_code_generation]
+    allowed_roles: [coding]
+    allowed_workflow_stages: [fix, implement]
+
+  kimi_k26:
+    canonical: ollama-cloud/kimi-k2.6:cloud
+    aliases: [kimi-k2.6:cloud, Kimi K2.6]
+    status: active
+    strengths: [frontend, ux, visual_design, implementation]
+    allowed_roles: [analysis, coding]
+    allowed_workflow_stages: [requirements, architecture, review, fix, implement]
+
+  minimax_m27:
+    canonical: ollama-cloud/minimax-m2.7:cloud
+    aliases: [minimax-m2.7:cloud, MiniMax M2.7]
+    status: limited
+    strengths: [deep_reading, smoke_testing, verification]
+    allowed_roles: [analysis, coding, testing]
+    allowed_workflow_stages: [smoke, review, qa]
+
+  devstral_2_123b:
+    canonical: ollama-cloud/devstral-2:123b-cloud
+    aliases: [devstral-2:123b-cloud, Devstral 2 123B]
+    status: limited
+    strengths: [coding, devops]
+    allowed_roles: [analysis, coding, testing]
+    allowed_workflow_stages: [review, fix, implement, qa]
+
+  qwen_turbo:
+    canonical: ollama-cloud/qwen-turbo
+    aliases: [qwen-turbo]
+    status: limited
+    strengths: [git_ops, light_setup]
+    allowed_roles: [coding]
+    allowed_workflow_stages: [fix, implement]
+
+  gpt55:
+    canonical: openai-codex/gpt-5.5
+    aliases: [gpt-5.5, GPT-5.5]
+    status: active
+    strengths: [complex_coding, orchestration, synthesis, linear_sync]
+    allowed_roles: [analysis, coding, verification, testing, pr, scanning, polling]
+    allowed_workflow_stages: [requirements, architecture, review, fix, implement, qa, release, pipeline, smoke, e2e-review, polling]

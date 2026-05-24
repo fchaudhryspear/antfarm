@@ -668,6 +668,13 @@ The `--company` flag:
 2. Verify: `openclaw cron list --json | grep antfarm`
 3. If still missing: `antfarm workflow ensure-crons <workflow-id>`
 
+### 🟡 "Large fan-out overloads gateway"
+1. Immediate event-driven dispatch is capped by `ANTFARM_MAX_IMMEDIATE_GATEWAY_SPAWNS` (default: `5`).
+2. Agents above the cap stay `pending`; normal crons pick them up on the next tick.
+3. Run the local policy harness after `npm run build`:
+   `node scripts/gateway-dispatch-load-test.mjs --agents 25 --cap 5 --iterations 5`
+4. The harness should report `pass: true` and `max_selected_per_tick <= cap`.
+
 ### 🔴 "Agent running wrong model"
 1. Check workflow.yml for agent model assignment
 2. Check if escalated: `SELECT escalated_model FROM steps WHERE agent_id = '...'`

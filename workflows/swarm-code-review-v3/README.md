@@ -9,7 +9,7 @@ Detailed design notes for the 10-agent parallel code review workflow.
 Pipeline:
 
 ```text
-10 parallel review domains → consolidate → validate-consolidate
+review-unit preflight → 10 parallel review domains → consolidate
 ```
 
 Domains:
@@ -41,6 +41,8 @@ Optional context:
 
 ### Operating model
 - All 10 review agents launch in parallel.
+- The review-unit preflight runs first and establishes repo accessibility, review mode, and source/change counts.
+- Domain reviewers fan out only when `REVIEW_UNIT_STATUS: ready`.
 - Each agent is constrained to real source discovery first.
 - Each agent is instructed to report only findings grounded in files actually read.
 - Consolidation waits on all 10 review steps.
@@ -55,19 +57,25 @@ Expected output starts with:
 SCORE:
 ```
 
+### review-unit-preflight
+Expected output includes:
+
+```text
+SCORE:
+FINDINGS:
+REVIEW_UNIT_STATUS:
+REVIEW_UNIT_JSON:
+```
+
 ### Consolidator
 Expected output starts with:
 
 ```text
 OVERALL_SCORE:
+STRUCTURED_FINDINGS_JSON:
 ```
 
-### validate-consolidate
-Expected output starts with:
-
-```text
-STATUS:
-```
+`STRUCTURED_FINDINGS_JSON` must be a JSON object matching `schemas/structured-findings.schema.json`. Antfarm validates that payload before marking the consolidate step complete.
 
 ## Important design updates
 
@@ -153,7 +161,9 @@ This workflow should normally finish well under those ceilings. These are failur
 ## Validation and regression coverage
 
 Regression tests were added in:
-- `test/validate-step-output.test.ts`
+- `src/validate-step-output.test.ts`
+- `src/validate-structured-findings.test.ts`
+- `src/installer/model-registry.test.ts`
 
 Coverage includes:
 - review consolidate passes without `PR_URL`
@@ -161,6 +171,8 @@ Coverage includes:
 - implement consolidate routes to fix schema
 - unknown/bare consolidate defaults safely
 - other schema routing still resolves correctly
+- model registry rejects unknown, inactive, role-ineligible, and stage-ineligible model assignments
+- structured findings JSON is schema-checked before the handoff to fix workflows
 
 ## Known technical debt
 
