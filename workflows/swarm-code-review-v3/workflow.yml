@@ -269,6 +269,15 @@ steps:
     - docs-review
     - testing-review
     - product-review
-  input: "TASK: Consolidate all 10 review reports into a unified code review summary.\n\nParse each agent's output, rank issues by severity across all domains, and produce a prioritized action plan.\n\nFor any agent that reported 0/100 or N/A with no real findings, mark it as \"INCOMPLETE — agent did not review source code\" in the summary.\n\nYour output must include:\nOVERALL_SCORE: <0-100>\nSTRUCTURED_FINDINGS_JSON: <single valid JSON object matching schemas/structured-findings.schema.json>\n\nThe structured findings JSON must use version \"1.0\", generated_by \"swarm-code-review-v3\", ISO generated_at, integer overall_score, domain_scores, and findings[]. Each finding needs finding_id, domain, severity, file, description, review_agent, and confidence.\n\nREVIEW OUTPUTS:\nCode Quality: {{ steps.code-quality-review.summary }}\nSecurity: {{ steps.security-audit.summary }}\nPerformance: {{ steps.performance-review.summary }}\nUX: {{ steps.ux-review.summary }}\nBackend: {{ steps.backend-review.summary }}\nFrontend: {{ steps.frontend-review.summary }}\nDevOps: {{ steps.devops-review.summary }}\nDocs: {{ steps.docs-review.summary }}\nTesting: {{ steps.testing-review.summary }}\nProduct: {{ steps.product-review.summary }}\n"
+  input: "TASK: Consolidate all 10 review reports into a unified code review summary.\n\nParse each agent's output, rank issues by severity across all domains, and produce a prioritized action plan.\n\nFor any agent that reported 0/100 or N/A with no real findings, mark it as \"INCOMPLETE — agent did not review source code\" in the summary.\n\nYour output must include:\nOVERALL_SCORE: <0-100>\nSTRUCTURED_FINDINGS_JSON: <single valid JSON object matching schemas/review-findings.schema.json>\n\nThe structured findings JSON must use version \"1.0\", generated_by \"swarm-code-review-v3\", ISO generated_at, integer overall_score, domain_scores, and findings[]. Each finding needs finding_id, domain, severity, file, description, review_agent, and confidence.\n\nREVIEW OUTPUTS:\nCode Quality: {{ steps.code-quality-review.summary }}\nSecurity: {{ steps.security-audit.summary }}\nPerformance: {{ steps.performance-review.summary }}\nUX: {{ steps.ux-review.summary }}\nBackend: {{ steps.backend-review.summary }}\nFrontend: {{ steps.frontend-review.summary }}\nDevOps: {{ steps.devops-review.summary }}\nDocs: {{ steps.docs-review.summary }}\nTesting: {{ steps.testing-review.summary }}\nProduct: {{ steps.product-review.summary }}\n"
+  max_retries: 2
+  on_fail: escalate_to_human
+- id: validate-consolidate
+  agent: consolidate
+  timeout_minutes: 10
+  expects: 'REVIEW_FINDINGS_VALIDATION:'
+  timeoutSeconds: 600
+  depends_on: [consolidate]
+  input: "TASK: Validate the review consolidation artifact before the workflow can finish.\n\nCONSOLIDATE OUTPUT:\n{{ steps.consolidate.summary }}\n\nSTEP 1: Confirm OVERALL_SCORE is present.\nSTEP 2: Confirm STRUCTURED_FINDINGS_JSON is present and matches schemas/review-findings.schema.json.\nSTEP 3: Confirm every finding includes finding_id, domain, severity, file, description, review_agent, and confidence.\n\nOutput:\nREVIEW_FINDINGS_VALIDATION: pass | fail\nVALIDATION_ERRORS: [list, or none]\n"
   max_retries: 2
   on_fail: escalate_to_human

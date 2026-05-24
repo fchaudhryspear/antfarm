@@ -262,6 +262,31 @@ steps:
 
       Do NOT discuss the workflow, pipeline, agents, or any infrastructure metadata. Exclude from all file operations: {{ exclude_patterns }}
 
+  - id: validate-prd
+    agent: prd-compiler
+    depends_on: [compile-prd]
+    timeout_minutes: 10
+    expects: 'PRD_VALIDATION:'
+    timeoutSeconds: 600
+    max_retries: 2
+    on_fail: escalate_to_human
+    input: |
+      TASK: Validate the compiled PRD artifact before this workflow can finish.
+
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      COMPILE OUTPUT: {{ steps.compile-prd.summary }}
+
+      STEP 1: Locate the PRD JSON path reported by compile-prd or docs/prd/<feature-name>.json.
+      STEP 2: Re-read the file and confirm it parses as JSON.
+      STEP 3: Confirm required sections exist: feature_name, user_stories, technical_feasibility, ux_flows, security_requirements, open_questions.
+      STEP 4: Report any missing sections.
+
+      Output:
+        PRD_VALIDATION: pass | fail
+        PRD_PATH: <path>
+        VALIDATION_ERRORS: [list, or none]
+
 hooks:
   onSuccess:
     - type: log

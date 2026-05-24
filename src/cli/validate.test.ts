@@ -12,9 +12,22 @@ describe("validateWorkflowDefinition dependency graph", () => {
         { id: "review-a", agent: "b", depends_on: ["preflight"] },
         { id: "review-b", agent: "c", depends_on: ["preflight"] },
         { id: "consolidate", agent: "d", depends_on: ["review-a", "review-b"] },
+        { id: "validate-consolidate", agent: "d", depends_on: ["consolidate"] },
       ],
     });
     assert.equal(result.valid, true);
+  });
+
+  it("rejects compiler and consolidator steps without explicit validators", () => {
+    const result = validateWorkflowDefinition({
+      id: "test-missing-validator",
+      name: "Test Missing Validator",
+      steps: [
+        { id: "compile-prd", agent: "prd-compiler" },
+      ],
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.message.includes("must be followed by an explicit validator step")));
   });
 
   it("rejects a missing dependency reference", () => {
