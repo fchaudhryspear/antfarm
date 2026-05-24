@@ -22,6 +22,7 @@ context:
   exclude_patterns: "_build_artifacts,node_modules,vendor,.venv,__pycache__,dist,build,.next,.git"
   review_directive: "Analyze the actual source code in {{ repo_path }}. Read source files before producing findings. Do NOT fabricate reviews. Do NOT discuss the workflow, pipeline, agent infrastructure, or task metadata. Exclude: {{ exclude_patterns }}. Review mode: {{ review_mode }}. If review_mode=diff-only, ONLY review files changed between {{ diff_base }} and current branch (run: git diff --name-only {{ diff_base }}..HEAD). If review_mode=full, review the entire codebase."
 acceptance_criteria:
+- Review-unit preflight completes before domain fan-out
 - All 10 review agents complete in parallel
 - All 10 agents produce SCORE: and at least 1 finding from actual source code
 - Consolidation merges all 10 reports into ranked output
@@ -144,8 +145,18 @@ agents:
   delivery:
     channel: telegram
 steps:
+- id: review-unit-preflight
+  agent: code-quality
+  timeout_minutes: 10
+  expects: 'SCORE:, REVIEW_UNIT_STATUS:'
+  timeoutSeconds: 600
+  input: "TASK: Establish the review unit before the domain review fan-out.\nREPO_PATH: {{ repo_path }}\nREPO_NAME: {{ repo_name }}\nREVIEW_MODE: {{ review_mode }}\nDIFF_BASE: {{ diff_base }}\nEXCLUDE: {{ exclude_patterns }}\n\nSTEP 1: cd into {{ repo_path }} and confirm it is a readable repository.\nSTEP 2: Count source files excluding {{ exclude_patterns }}.\nSTEP 3: If REVIEW_MODE=diff-only, list files changed between {{ diff_base }} and HEAD.\nSTEP 4: Output a compact review-unit summary for downstream reviewers.\n\nOutput must include these keys:\nSCORE: 100 if ready, 0 if blocked\nFINDINGS: brief preflight note grounded in repo evidence\nREVIEW_UNIT_STATUS: ready|blocked\nREVIEW_UNIT_JSON: {\"repo_name\":\"...\",\"review_mode\":\"...\",\"source_file_count\":0,\"changed_file_count\":0,\"blocked_reason\":\"\"}\n"
+  max_retries: 2
+  on_fail: escalate_to_human
 - id: code-quality-review
   agent: code-quality
+  depends_on: [review-unit-preflight]
+  condition: "{{ steps.review-unit-preflight.REVIEW_UNIT_STATUS }} contains 'ready'"
   timeout_minutes: 60
   expects: 'SCORE:'
   timeoutSeconds: 3600
@@ -154,6 +165,8 @@ steps:
   on_fail: escalate_to_human
 - id: security-audit
   agent: security-auditor
+  depends_on: [review-unit-preflight]
+  condition: "{{ steps.review-unit-preflight.REVIEW_UNIT_STATUS }} contains 'ready'"
   timeout_minutes: 60
   expects: 'SCORE:'
   timeoutSeconds: 3600
@@ -162,6 +175,8 @@ steps:
   on_fail: escalate_to_human
 - id: performance-review
   agent: performance-engineer
+  depends_on: [review-unit-preflight]
+  condition: "{{ steps.review-unit-preflight.REVIEW_UNIT_STATUS }} contains 'ready'"
   timeout_minutes: 90
   expects: 'SCORE:'
   timeoutSeconds: 5400
@@ -170,6 +185,8 @@ steps:
   on_fail: escalate_to_human
 - id: ux-review
   agent: ux-specialist
+  depends_on: [review-unit-preflight]
+  condition: "{{ steps.review-unit-preflight.REVIEW_UNIT_STATUS }} contains 'ready'"
   timeout_minutes: 90
   expects: 'SCORE:'
   timeoutSeconds: 5400
@@ -178,6 +195,8 @@ steps:
   on_fail: escalate_to_human
 - id: backend-review
   agent: backend-architect
+  depends_on: [review-unit-preflight]
+  condition: "{{ steps.review-unit-preflight.REVIEW_UNIT_STATUS }} contains 'ready'"
   timeout_minutes: 90
   expects: 'SCORE:'
   timeoutSeconds: 5400
@@ -186,6 +205,8 @@ steps:
   on_fail: escalate_to_human
 - id: frontend-review
   agent: frontend-architect
+  depends_on: [review-unit-preflight]
+  condition: "{{ steps.review-unit-preflight.REVIEW_UNIT_STATUS }} contains 'ready'"
   timeout_minutes: 60
   expects: 'SCORE:'
   timeoutSeconds: 3600
@@ -194,6 +215,8 @@ steps:
   on_fail: escalate_to_human
 - id: devops-review
   agent: devops-engineer
+  depends_on: [review-unit-preflight]
+  condition: "{{ steps.review-unit-preflight.REVIEW_UNIT_STATUS }} contains 'ready'"
   timeout_minutes: 60
   expects: 'SCORE:'
   timeoutSeconds: 3600
@@ -202,6 +225,8 @@ steps:
   on_fail: escalate_to_human
 - id: docs-review
   agent: documentation-specialist
+  depends_on: [review-unit-preflight]
+  condition: "{{ steps.review-unit-preflight.REVIEW_UNIT_STATUS }} contains 'ready'"
   timeout_minutes: 30
   expects: 'SCORE:'
   timeoutSeconds: 1800
@@ -210,6 +235,8 @@ steps:
   on_fail: escalate_to_human
 - id: testing-review
   agent: testing-strategist
+  depends_on: [review-unit-preflight]
+  condition: "{{ steps.review-unit-preflight.REVIEW_UNIT_STATUS }} contains 'ready'"
   timeout_minutes: 60
   expects: 'SCORE:'
   timeoutSeconds: 3600
@@ -218,6 +245,8 @@ steps:
   on_fail: escalate_to_human
 - id: product-review
   agent: product-strategist
+  depends_on: [review-unit-preflight]
+  condition: "{{ steps.review-unit-preflight.REVIEW_UNIT_STATUS }} contains 'ready'"
   timeout_minutes: 60
   expects: 'SCORE:'
   timeoutSeconds: 3600
@@ -227,7 +256,7 @@ steps:
 - id: consolidate
   agent: consolidate
   timeout_minutes: 60
-  expects: 'OVERALL_SCORE:'
+  expects: 'OVERALL_SCORE:, STRUCTURED_FINDINGS_JSON:'
   timeoutSeconds: 3600
   depends_on:
     - code-quality-review
@@ -240,6 +269,6 @@ steps:
     - docs-review
     - testing-review
     - product-review
-  input: "TASK: Consolidate all 10 review reports into a unified code review summary.\n\nParse each agent's output, rank issues by severity across all domains, and produce a prioritized action plan.\n\nFor any agent that reported 0/100 or N/A with no real findings, mark it as \"INCOMPLETE — agent did not review source code\" in the summary.\n\nREVIEW OUTPUTS:\nCode Quality: {{ steps.code-quality-review.summary }}\nSecurity: {{ steps.security-audit.summary }}\nPerformance: {{ steps.performance-review.summary }}\nUX: {{ steps.ux-review.summary }}\nBackend: {{ steps.backend-review.summary }}\nFrontend: {{ steps.frontend-review.summary }}\nDevOps: {{ steps.devops-review.summary }}\nDocs: {{ steps.docs-review.summary }}\nTesting: {{ steps.testing-review.summary }}\nProduct: {{ steps.product-review.summary }}\n"
+  input: "TASK: Consolidate all 10 review reports into a unified code review summary.\n\nParse each agent's output, rank issues by severity across all domains, and produce a prioritized action plan.\n\nFor any agent that reported 0/100 or N/A with no real findings, mark it as \"INCOMPLETE — agent did not review source code\" in the summary.\n\nYour output must include:\nOVERALL_SCORE: <0-100>\nSTRUCTURED_FINDINGS_JSON: <single valid JSON object matching schemas/structured-findings.schema.json>\n\nThe structured findings JSON must use version \"1.0\", generated_by \"swarm-code-review-v3\", ISO generated_at, integer overall_score, domain_scores, and findings[]. Each finding needs finding_id, domain, severity, file, description, review_agent, and confidence.\n\nREVIEW OUTPUTS:\nCode Quality: {{ steps.code-quality-review.summary }}\nSecurity: {{ steps.security-audit.summary }}\nPerformance: {{ steps.performance-review.summary }}\nUX: {{ steps.ux-review.summary }}\nBackend: {{ steps.backend-review.summary }}\nFrontend: {{ steps.frontend-review.summary }}\nDevOps: {{ steps.devops-review.summary }}\nDocs: {{ steps.docs-review.summary }}\nTesting: {{ steps.testing-review.summary }}\nProduct: {{ steps.product-review.summary }}\n"
   max_retries: 2
   on_fail: escalate_to_human

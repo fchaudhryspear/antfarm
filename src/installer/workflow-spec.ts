@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
 import type { LoopConfig, PollingConfig, WorkflowAgent, WorkflowSpec, WorkflowStep } from "./types.js";
+import { assertWorkflowModelsValid } from "./model-registry.js";
 
 export async function loadWorkflowSpec(workflowDir: string): Promise<WorkflowSpec> {
   const filePath = path.join(workflowDir, "workflow.yml");
@@ -34,6 +35,7 @@ export async function loadWorkflowSpec(workflowDir: string): Promise<WorkflowSpe
     }
   }
   validateSteps(parsed.steps, workflowDir);
+  assertWorkflowModelsValid(parsed);
   return parsed;
 }
 

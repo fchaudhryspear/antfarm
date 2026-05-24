@@ -20,11 +20,11 @@ export function getDb(): DatabaseSync {
   _dbOpenedAt = now;
   _db.exec("PRAGMA journal_mode=WAL");
   _db.exec("PRAGMA foreign_keys=ON");
-  migrate(_db);
+  migrateDb(_db);
   return _db;
 }
 
-function migrate(db: DatabaseSync): void {
+export function migrateDb(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS runs (
       id TEXT PRIMARY KEY,
@@ -67,6 +67,125 @@ function migrate(db: DatabaseSync): void {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS factory_items (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      repo TEXT,
+      issue_url TEXT,
+      source TEXT,
+      priority TEXT NOT NULL DEFAULT 'normal',
+      status TEXT NOT NULL DEFAULT 'queued',
+      lifecycle_stage TEXT NOT NULL DEFAULT 'intake',
+      requested_by TEXT,
+      owner TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS factory_runs (
+      id TEXT PRIMARY KEY,
+      factory_item_id TEXT NOT NULL REFERENCES factory_items(id) ON DELETE CASCADE,
+      workflow_id TEXT NOT NULL,
+      antfarm_run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      started_at TEXT,
+      completed_at TEXT,
+      model_policy TEXT,
+      budget_json TEXT,
+      error_summary TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS factory_agent_runs (
+      id TEXT PRIMARY KEY,
+      factory_run_id TEXT NOT NULL REFERENCES factory_runs(id) ON DELETE CASCADE,
+      context_pack_id TEXT,
+      antfarm_step_id TEXT REFERENCES steps(id) ON DELETE SET NULL,
+      agent_role TEXT NOT NULL,
+      agent_name TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      workspace_path TEXT,
+      branch_name TEXT,
+      model TEXT,
+      token_usage_json TEXT,
+      cost_estimate REAL,
+      started_at TEXT,
+      completed_at TEXT,
+      result_summary TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS factory_context_packs (
+      id TEXT PRIMARY KEY,
+      factory_item_id TEXT NOT NULL REFERENCES factory_items(id) ON DELETE CASCADE,
+      factory_run_id TEXT REFERENCES factory_runs(id) ON DELETE SET NULL,
+      stage TEXT NOT NULL,
+      agent_role TEXT NOT NULL,
+      path TEXT NOT NULL,
+      checksum TEXT NOT NULL,
+      manifest_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS factory_artifacts (
+      id TEXT PRIMARY KEY,
+      factory_item_id TEXT NOT NULL REFERENCES factory_items(id) ON DELETE CASCADE,
+      factory_run_id TEXT REFERENCES factory_runs(id) ON DELETE SET NULL,
+      agent_run_id TEXT REFERENCES factory_agent_runs(id) ON DELETE SET NULL,
+      artifact_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      path_or_url TEXT NOT NULL,
+      checksum TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS factory_gates (
+      id TEXT PRIMARY KEY,
+      factory_item_id TEXT NOT NULL REFERENCES factory_items(id) ON DELETE CASCADE,
+      factory_run_id TEXT REFERENCES factory_runs(id) ON DELETE SET NULL,
+      gate_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      required INTEGER NOT NULL DEFAULT 1,
+      evidence_url TEXT,
+      checked_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS factory_events (
+      id TEXT PRIMARY KEY,
+      factory_item_id TEXT NOT NULL REFERENCES factory_items(id) ON DELETE CASCADE,
+      factory_run_id TEXT REFERENCES factory_runs(id) ON DELETE SET NULL,
+      event_type TEXT NOT NULL,
+      actor TEXT,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS obsidian_mirror_events (
+      id TEXT PRIMARY KEY,
+      factory_item_id TEXT NOT NULL REFERENCES factory_items(id) ON DELETE CASCADE,
+      factory_run_id TEXT REFERENCES factory_runs(id) ON DELETE SET NULL,
+      context_pack_id TEXT REFERENCES factory_context_packs(id) ON DELETE SET NULL,
+      note_path TEXT NOT NULL,
+      note_checksum TEXT NOT NULL,
+      source_refs_json TEXT NOT NULL DEFAULT '[]',
+      redaction_status TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_factory_items_status ON factory_items(status, lifecycle_stage);
+    CREATE INDEX IF NOT EXISTS idx_factory_runs_item ON factory_runs(factory_item_id, status);
+    CREATE INDEX IF NOT EXISTS idx_factory_context_packs_item ON factory_context_packs(factory_item_id, stage, agent_role);
+    CREATE INDEX IF NOT EXISTS idx_factory_agent_runs_run ON factory_agent_runs(factory_run_id, status);
+    CREATE INDEX IF NOT EXISTS idx_factory_artifacts_item ON factory_artifacts(factory_item_id, artifact_type);
+    CREATE INDEX IF NOT EXISTS idx_factory_gates_item ON factory_gates(factory_item_id, gate_type);
+    CREATE INDEX IF NOT EXISTS idx_factory_events_item ON factory_events(factory_item_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_obsidian_mirror_events_item ON obsidian_mirror_events(factory_item_id, created_at);
   `);
 
   // Add columns to steps table for backwards compat
@@ -99,6 +218,15 @@ function migrate(db: DatabaseSync): void {
   // Issue #344: Per-step condition for Tier skip logic
   if (!colNames.has("condition")) {
     db.exec("ALTER TABLE steps ADD COLUMN condition TEXT");
+  }
+  if (!colNames.has("depends_on")) {
+    db.exec("ALTER TABLE steps ADD COLUMN depends_on TEXT");
+  }
+
+  const agentRunCols = db.prepare("PRAGMA table_info(factory_agent_runs)").all() as Array<{ name: string }>;
+  const agentRunColNames = new Set(agentRunCols.map((c) => c.name));
+  if (!agentRunColNames.has("context_pack_id")) {
+    db.exec("ALTER TABLE factory_agent_runs ADD COLUMN context_pack_id TEXT");
   }
 
   // Issue #343: Agent retry stats table for prompt tuning framework
