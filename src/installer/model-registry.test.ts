@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolveModelFamily, validateWorkflowModels, type ModelRegistry } from "./model-registry.js";
+import { resolveModelFamily, validateModelRegistryShape, validateWorkflowModels, type ModelRegistry } from "./model-registry.js";
 import type { WorkflowSpec } from "./types.js";
 
 const registry: ModelRegistry = {
@@ -44,6 +44,57 @@ function workflow(model: string): WorkflowSpec {
 }
 
 describe("model registry validation", () => {
+  it("validates the v3 registry model contract", () => {
+    assert.deepEqual(validateModelRegistryShape({
+      version: 1,
+      models: [{
+        id: "provider/coder",
+        family: "coding",
+        provider: "provider",
+        fallback_chain: ["provider/fallback"],
+        eligible_stages: ["fix"],
+        cost_per_1k_tokens: 0.01,
+        deprecated: false,
+      }],
+    }), []);
+
+    const errors = validateModelRegistryShape({
+      version: 1,
+      models: [{
+        id: "provider/coder",
+        family: "coding",
+        provider: "provider",
+        eligible_stages: [],
+        cost_per_1k_tokens: -1,
+      }],
+    });
+    assert.ok(errors.some((error) => error.includes("fallback_chain")));
+    assert.ok(errors.some((error) => error.includes("eligible_stages")));
+    assert.ok(errors.some((error) => error.includes("cost_per_1k_tokens")));
+    assert.ok(errors.some((error) => error.includes("deprecated")));
+  });
+
+  it("resolves models from the v3 models array", () => {
+    const modelRegistry: ModelRegistry = {
+      version: 1,
+      models: [{
+        id: "provider/coder",
+        family: "coding",
+        provider: "provider",
+        aliases: ["coder"],
+        fallback_chain: ["provider/fallback"],
+        eligible_roles: ["coding"],
+        eligible_stages: ["fix"],
+        cost_per_1k_tokens: 0.01,
+        deprecated: false,
+      }],
+    };
+
+    const family = resolveModelFamily("coder", modelRegistry);
+    assert.equal(family?.canonical, "provider/coder");
+    assert.deepEqual(family?.allowed_workflow_stages, ["fix"]);
+  });
+
   it("resolves aliases to a registered model family", () => {
     const family = resolveModelFamily("coder", registry);
     assert.equal(family?.canonical, "provider/coder");

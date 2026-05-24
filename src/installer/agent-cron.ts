@@ -73,6 +73,11 @@ RULES:
 2. Write output to a file first, then pipe via stdin (shell escaping breaks direct args)
 3. If you're unsure whether to complete or fail, call step fail with an explanation
 
+Preflight whitelist: the heredoc/pipe completion pattern is allowed only when the pipe target is this exact Antfarm CLI path:
+\`\`\`
+node ${cli} step complete "$STEP_ID"
+\`\`\`
+
 // Fix #3 (RCA 322-325): Session timeout hook — register emergency exit handler.
 // If the session is killed (timeout, OOM, token limit), the shell will execute this on exit.
 SESSION_TIMEOUT_HOOK=$(mktemp)
@@ -119,6 +124,11 @@ RULES:
 1. NEVER end your session without calling step complete or step fail
 2. Write output to a file first, then pipe via stdin (shell escaping breaks direct args)
 3. If you're unsure whether to complete or fail, call step fail with an explanation
+
+Preflight whitelist: the heredoc/pipe completion pattern is allowed only when the pipe target is this exact Antfarm CLI path:
+\`\`\`
+node ${cli} step complete "$STEP_ID"
+\`\`\`
 
 // Fix #3 (RCA 322-325): Session timeout hook — register emergency exit handler.
 // Parses stepId from the JSON you received, then sets a trap to auto-fail on session death.

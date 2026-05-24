@@ -275,6 +275,27 @@ steps:
         BLOCKING_ISSUES: [list, max 10]
         REPORT_PATH: <path to readiness report>
 
+  - id: validate-release
+    agent: release-compiler
+    depends_on: [compile-release]
+    timeout_minutes: 10
+    expects: 'RELEASE_VALIDATION:'
+    timeoutSeconds: 600
+    max_retries: 2
+    on_fail: escalate_to_human
+    input: |
+      TASK: Validate the release compiler output before this workflow can finish.
+
+      RELEASE COMPILE OUTPUT: {{ steps.compile-release.summary }}
+
+      STEP 1: Confirm RELEASE_STATUS, READINESS, VERSION, DEPLOY_METHOD, SMOKE_PASS_RATE, and REPORT_PATH are present.
+      STEP 2: Confirm READINESS is one of READY, CONDITIONAL, or NOT_READY.
+      STEP 3: Confirm any CONDITIONAL or NOT_READY result includes BLOCKING_ISSUES or explicit rationale.
+
+      Output:
+        RELEASE_VALIDATION: pass | fail
+        VALIDATION_ERRORS: [list, or none]
+
 hooks:
   onSuccess:
     - type: log

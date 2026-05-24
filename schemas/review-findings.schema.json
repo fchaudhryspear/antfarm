@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Review Findings Schema v1.0",
+  "description": "Canonical review-to-fix handoff format consumed by fix swarms. This file is the stable v3-facing name for structured findings.",
+  "type": "object",
+  "required": ["version", "repo_name", "repo_path", "generated_by", "generated_at", "overall_score", "domain_scores", "findings"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "repo_name": {
+      "type": "string"
+    },
+    "repo_path": {
+      "type": "string"
+    },
+    "generated_by": {
+      "type": "string",
+      "const": "swarm-code-review-v3"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "overall_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "domain_scores": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/finding"
+      }
+    }
+  },
+  "definitions": {
+    "finding": {
+      "type": "object",
+      "required": ["finding_id", "domain", "severity", "file", "description", "review_agent", "confidence"],
+      "properties": {
+        "finding_id": {
+          "type": "string",
+          "pattern": "^[A-Z]{2,4}-\\d{3}$"
+        },
+        "domain": {
+          "type": "string",
+          "enum": ["security", "backend", "performance", "testing", "code-quality", "frontend", "devops", "ux", "documentation", "product"]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low"]
+        },
+        "file": {
+          "type": "string"
+        },
+        "line_range": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "description": {
+          "type": "string"
+        },
+        "suggested_approach": {
+          "type": "string"
+        },
+        "category_tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "review_agent": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "related_findings": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "shared_file": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
