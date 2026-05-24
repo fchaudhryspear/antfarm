@@ -29,6 +29,14 @@ import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/me
 import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
 import { validateWorkflow } from "./validate.js";
 import { recoverCrons } from "./cron-recovery.js";
+import {
+  approveFactoryGate,
+  createOrLinkFactoryItem,
+  listDashboardAuditEvents,
+  pauseFactoryRun,
+  resumeFactoryRun,
+  retryFactoryRun,
+} from "../factory/operator.js";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -85,6 +93,105 @@ function printEvents(events: AntfarmEvent[]): void {
   }
 }
 
+function parseFlag(args: string[], name: string): string | undefined {
+  const prefix = `${name}=`;
+  const inline = args.find((arg) => arg.startsWith(prefix));
+  if (inline) return inline.slice(prefix.length);
+  const idx = args.indexOf(name);
+  if (idx >= 0 && idx + 1 < args.length) return args[idx + 1];
+  return undefined;
+}
+
+function requireFlag(args: string[], name: string): string {
+  const value = parseFlag(args, name);
+  if (!value) throw new Error(`Missing required flag ${name}`);
+  return value;
+}
+
+async function handleFactoryOperator(args: string[]): Promise<void> {
+  const command = args[0];
+  const flags = args.slice(1);
+  const operator = parseFlag(flags, "--operator") ?? "hermes";
+  const expectedUpdatedAt = parseFlag(flags, "--expected-updated-at");
+  const reason = parseFlag(flags, "--reason");
+
+  if (!command || command === "help" || command === "--help" || command === "-h") {
+    console.log([
+      "antfarm factory operator intake --title <title> [--factory-item-id <id>]",
+      "antfarm factory operator approve-gate --factory-item-id <id> --gate <type> [--factory-run-id <id>] [--evidence-url <url>]",
+      "antfarm factory operator pause-run --factory-run-id <id> [--expected-updated-at <iso>] [--reason <text>]",
+      "antfarm factory operator resume-run --factory-run-id <id> [--expected-updated-at <iso>] [--reason <text>]",
+      "antfarm factory operator retry-run --factory-run-id <id> [--expected-updated-at <iso>] [--reason <text>]",
+      "antfarm factory operator audit [--factory-item-id <id>] [--factory-run-id <id>] [--limit <n>]",
+    ].join("\n"));
+    return;
+  }
+
+  try {
+    if (command === "intake") {
+      const result = createOrLinkFactoryItem({
+        factoryItemId: parseFlag(flags, "--factory-item-id"),
+        title: requireFlag(flags, "--title"),
+        description: parseFlag(flags, "--description"),
+        repo: parseFlag(flags, "--repo"),
+        issueUrl: parseFlag(flags, "--issue-url"),
+        source: parseFlag(flags, "--source") ?? "hermes",
+        priority: parseFlag(flags, "--priority"),
+        requestedBy: parseFlag(flags, "--requested-by"),
+        owner: parseFlag(flags, "--owner"),
+        operator,
+        externalRef: parseFlag(flags, "--external-ref"),
+      });
+      console.log(JSON.stringify({
+        ok: true,
+        command: result.created ? "intake.create" : "intake.link",
+        factory_item_id: result.item.id,
+        audit_event_id: result.auditEvent.id,
+      }, null, 2));
+      return;
+    }
+
+    if (command === "approve-gate") {
+      const result = approveFactoryGate({
+        factoryItemId: requireFlag(flags, "--factory-item-id"),
+        factoryRunId: parseFlag(flags, "--factory-run-id"),
+        gateType: requireFlag(flags, "--gate"),
+        evidenceUrl: parseFlag(flags, "--evidence-url"),
+        operator,
+      });
+      console.log(JSON.stringify({ ok: true, command: result.command, audit_event_id: result.auditEvent.id }, null, 2));
+      return;
+    }
+
+    if (command === "pause-run" || command === "resume-run" || command === "retry-run") {
+      const factoryRunId = requireFlag(flags, "--factory-run-id");
+      const result = command === "pause-run"
+        ? pauseFactoryRun({ factoryRunId, operator, expectedUpdatedAt, reason })
+        : command === "resume-run"
+          ? resumeFactoryRun({ factoryRunId, operator, expectedUpdatedAt, reason })
+          : retryFactoryRun({ factoryRunId, operator, expectedUpdatedAt, reason });
+      console.log(JSON.stringify({ ok: true, command: result.command, audit_event_id: result.auditEvent.id }, null, 2));
+      return;
+    }
+
+    if (command === "audit") {
+      const limitRaw = parseFlag(flags, "--limit");
+      const events = listDashboardAuditEvents({
+        factoryItemId: parseFlag(flags, "--factory-item-id"),
+        factoryRunId: parseFlag(flags, "--factory-run-id"),
+        limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
+      });
+      console.log(JSON.stringify({ ok: true, events }, null, 2));
+      return;
+    }
+
+    throw new Error(`Unknown factory operator command: ${command}`);
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  }
+}
+
 function printUsage() {
   process.stdout.write(
     [
@@ -121,6 +228,11 @@ function printUsage() {
       "antfarm medic log [<count>]          Show recent medic check history",
       "",
       "antfarm agent-stats [--agent <name>]  Show agent retry rates (flags >10%)",
+      "",
+      "antfarm factory operator intake --title <title> [--factory-item-id <id>]  Create/link FactoryItem",
+      "antfarm factory operator approve-gate --factory-item-id <id> --gate <type>",
+      "antfarm factory operator pause-run|resume-run|retry-run --factory-run-id <id>",
+      "antfarm factory operator audit [--factory-item-id <id>] [--factory-run-id <id>]",
       "",
       "antfarm logs [<lines>]               Show recent activity (from events)",
       "antfarm logs <run-id>                Show activity for a specific run",
@@ -241,6 +353,11 @@ async function main() {
     } else {
       console.log("\nDashboard already running.");
     }
+    return;
+  }
+
+  if (group === "factory" && action === "operator") {
+    await handleFactoryOperator(args.slice(2));
     return;
   }
 

@@ -242,6 +242,19 @@ export function migrateDb(db: DatabaseSync): void {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS dashboard_audit_events (
+      id TEXT PRIMARY KEY,
+      factory_item_id TEXT REFERENCES factory_items(id) ON DELETE SET NULL,
+      factory_run_id TEXT REFERENCES factory_runs(id) ON DELETE SET NULL,
+      operator TEXT NOT NULL,
+      command TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_factory_items_status ON factory_items(status, lifecycle_stage);
     CREATE INDEX IF NOT EXISTS idx_factory_runs_item ON factory_runs(factory_item_id, status);
     CREATE INDEX IF NOT EXISTS idx_factory_context_packs_item ON factory_context_packs(factory_item_id, stage, agent_role);
@@ -254,6 +267,8 @@ export function migrateDb(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_deployment_events_item ON deployment_events(factory_item_id, environment, created_at);
     CREATE INDEX IF NOT EXISTS idx_smoke_test_runs_item ON smoke_test_runs(factory_item_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_monitoring_observations_item ON monitoring_observations(factory_item_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_dashboard_audit_events_target ON dashboard_audit_events(target_type, target_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_dashboard_audit_events_item ON dashboard_audit_events(factory_item_id, created_at);
   `);
 
   // Add columns to steps table for backwards compat
