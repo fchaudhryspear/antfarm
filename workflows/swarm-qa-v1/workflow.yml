@@ -280,6 +280,27 @@ steps:
         GO_NO_GO: GO | NO-GO | CONDITIONAL
         BLOCKING_ISSUES: [list]
 
+  - id: validate-qa
+    agent: qa-compiler
+    depends_on: [qa-compile]
+    timeout_minutes: 10
+    expects: 'QA_VALIDATION:'
+    timeoutSeconds: 600
+    max_retries: 2
+    on_fail: escalate_to_human
+    input: |
+      TASK: Validate the QA compiler output before this workflow can finish.
+
+      QA COMPILE OUTPUT: {{ steps.qa-compile.summary }}
+
+      STEP 1: Confirm QA_STATUS, GO_NO_GO, ACCEPTANCE_COVERAGE, E2E_TESTS_PASSED, and REGRESSION_STATUS are present.
+      STEP 2: Confirm GO_NO_GO is one of GO, NO-GO, or CONDITIONAL.
+      STEP 3: Confirm any NO-GO or CONDITIONAL result includes BLOCKING_ISSUES or explicit rationale.
+
+      Output:
+        QA_VALIDATION: pass | fail
+        VALIDATION_ERRORS: [list, or none]
+
 hooks:
   onSuccess:
     - type: log

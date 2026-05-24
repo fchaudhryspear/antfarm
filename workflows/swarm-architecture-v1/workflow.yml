@@ -522,6 +522,31 @@ steps:
         }
         ARCHITECTURE_FILE_WRITTEN: <path>
 
+  - id: validate-architecture
+    agent: arch-compiler
+    depends_on: [compile-architecture]
+    timeout_minutes: 15
+    expects: 'ARCH_VALIDATION:'
+    timeoutSeconds: 900
+    max_retries: 2
+    on_fail: escalate_to_human
+    input: |
+      TASK: Validate the compiled architecture artifact before this workflow can finish.
+
+      REPO_PATH: {{ repo_path }}
+      REPO_NAME: {{ repo_name }}
+      COMPILE OUTPUT: {{ steps.compile-architecture.summary }}
+
+      STEP 1: Locate the architecture JSON path reported by compile-architecture.
+      STEP 2: Re-read the file and confirm it parses as JSON.
+      STEP 3: Confirm required sections exist: ADRS, API design, SCHEMA_CHANGES, COMPONENT_TREE, IMPLEMENTATION_PLAN, DEPLOYMENT_TARGETS.
+      STEP 4: Confirm implementation phases have explicit dependencies.
+
+      Output:
+        ARCH_VALIDATION: pass | fail
+        ARCH_PATH: <path>
+        VALIDATION_ERRORS: [list, or none]
+
 hooks:
   onSuccess:
     - type: log

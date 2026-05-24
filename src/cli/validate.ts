@@ -269,11 +269,49 @@ function validateDependencyGraph(steps: Step[]): ValidationError[] {
   return errors;
 }
 
+function isCompilerOrConsolidator(step: Step): boolean {
+  const haystack = `${step.id} ${step.agent ?? ""}`.toLowerCase();
+  if (haystack.includes("validate")) return false;
+  return haystack.includes("compile")
+    || haystack.includes("compiler")
+    || haystack.includes("consolidate")
+    || haystack.includes("consolidator");
+}
+
+function isValidatorStep(step: Step): boolean {
+  const haystack = `${step.id} ${step.agent ?? ""}`.toLowerCase();
+  return haystack.includes("validate") || haystack.includes("validator") || haystack.includes("post-review");
+}
+
+function validatePostCompilerValidators(steps: Step[]): ValidationError[] {
+  const errors: ValidationError[] = [];
+  for (const producer of steps.filter(isCompilerOrConsolidator)) {
+    const validator = steps.find((candidate) => (
+      isValidatorStep(candidate)
+      && normalizeDependsOn(candidate.depends_on).includes(producer.id)
+    ));
+    if (!validator) {
+      errors.push({
+        severity: 'error',
+        step: producer.id,
+        message: `Compiler/consolidator step "${producer.id}" must be followed by an explicit validator step`,
+        suggestion: `Add a validate-* step that depends_on: [${producer.id}] and emits a validation status key`,
+      });
+    }
+  }
+  return errors;
+}
+
 export function validateWorkflowDefinition(workflow: Workflow): ValidationResult {
   const result = validateOutputs(workflow);
   const dependencyErrors = validateDependencyGraph(workflow.steps);
   if (dependencyErrors.length > 0) {
     result.errors.push(...dependencyErrors);
+    result.valid = false;
+  }
+  const validatorErrors = validatePostCompilerValidators(workflow.steps);
+  if (validatorErrors.length > 0) {
+    result.errors.push(...validatorErrors);
     result.valid = false;
   }
   return result;
