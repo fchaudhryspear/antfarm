@@ -166,6 +166,18 @@ export function migrateDb(db: DatabaseSync): void {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS obsidian_mirror_events (
+      id TEXT PRIMARY KEY,
+      factory_item_id TEXT NOT NULL REFERENCES factory_items(id) ON DELETE CASCADE,
+      factory_run_id TEXT REFERENCES factory_runs(id) ON DELETE SET NULL,
+      context_pack_id TEXT REFERENCES factory_context_packs(id) ON DELETE SET NULL,
+      note_path TEXT NOT NULL,
+      note_checksum TEXT NOT NULL,
+      source_refs_json TEXT NOT NULL DEFAULT '[]',
+      redaction_status TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_factory_items_status ON factory_items(status, lifecycle_stage);
     CREATE INDEX IF NOT EXISTS idx_factory_runs_item ON factory_runs(factory_item_id, status);
     CREATE INDEX IF NOT EXISTS idx_factory_context_packs_item ON factory_context_packs(factory_item_id, stage, agent_role);
@@ -173,6 +185,7 @@ export function migrateDb(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_factory_artifacts_item ON factory_artifacts(factory_item_id, artifact_type);
     CREATE INDEX IF NOT EXISTS idx_factory_gates_item ON factory_gates(factory_item_id, gate_type);
     CREATE INDEX IF NOT EXISTS idx_factory_events_item ON factory_events(factory_item_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_obsidian_mirror_events_item ON obsidian_mirror_events(factory_item_id, created_at);
   `);
 
   // Add columns to steps table for backwards compat
