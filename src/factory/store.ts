@@ -150,6 +150,19 @@ export type MonitoringObservation = {
   created_at: string;
 };
 
+export type DashboardAuditEvent = {
+  id: string;
+  factory_item_id: string | null;
+  factory_run_id: string | null;
+  operator: string;
+  command: string;
+  target_type: string;
+  target_id: string;
+  status: string;
+  payload_json: string;
+  created_at: string;
+};
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -407,6 +420,38 @@ export function appendFactoryEvent(input: {
   return id;
 }
 
+export function appendDashboardAuditEvent(input: {
+  id?: string;
+  factoryItemId?: string;
+  factoryRunId?: string;
+  operator: string;
+  command: string;
+  targetType: string;
+  targetId: string;
+  status: string;
+  payload?: unknown;
+}, db: DatabaseSync = getDb()): DashboardAuditEvent {
+  const id = input.id ?? crypto.randomUUID();
+  db.prepare(`
+    INSERT INTO dashboard_audit_events (
+      id, factory_item_id, factory_run_id, operator, command, target_type,
+      target_id, status, payload_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    input.factoryItemId ?? null,
+    input.factoryRunId ?? null,
+    input.operator,
+    input.command,
+    input.targetType,
+    input.targetId,
+    input.status,
+    JSON.stringify(input.payload ?? {}),
+    nowIso(),
+  );
+  return db.prepare("SELECT * FROM dashboard_audit_events WHERE id = ?").get(id) as DashboardAuditEvent;
+}
+
 export function recordRollbackPlan(input: {
   id?: string;
   factoryItemId: string;
@@ -655,6 +700,7 @@ export function getFactoryItemStatus(factoryItemId: string, db: DatabaseSync = g
   gates: Array<Record<string, unknown>>;
   artifacts: Array<Record<string, unknown>>;
   events: Array<Record<string, unknown>>;
+  auditEvents: DashboardAuditEvent[];
 } {
   return {
     item: getFactoryItem(factoryItemId, db),
@@ -669,5 +715,6 @@ export function getFactoryItemStatus(factoryItemId: string, db: DatabaseSync = g
     gates: db.prepare("SELECT * FROM factory_gates WHERE factory_item_id = ? ORDER BY created_at ASC").all(factoryItemId) as Array<Record<string, unknown>>,
     artifacts: db.prepare("SELECT * FROM factory_artifacts WHERE factory_item_id = ? ORDER BY created_at ASC").all(factoryItemId) as Array<Record<string, unknown>>,
     events: db.prepare("SELECT * FROM factory_events WHERE factory_item_id = ? ORDER BY created_at ASC").all(factoryItemId) as Array<Record<string, unknown>>,
+    auditEvents: db.prepare("SELECT * FROM dashboard_audit_events WHERE factory_item_id = ? ORDER BY created_at ASC").all(factoryItemId) as DashboardAuditEvent[],
   };
 }
