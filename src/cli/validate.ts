@@ -9,10 +9,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { validateWorkflowModels } from '../installer/model-registry.js';
+import type { WorkflowSpec } from '../installer/types.js';
 
 interface Step {
   id: string;
   agent?: string;
+  depends_on?: string | string[];
   input?: string;
   input_template?: string;
   outputs?: Record<string, string>;
@@ -30,6 +33,9 @@ interface Workflow {
 interface Agent {
   id: string;
   name?: string;
+  role?: string;
+  model?: string;
+  pollingModel?: string;
   outputs?: Record<string, string>;
 }
 
@@ -213,6 +219,76 @@ function validateOutputs(workflow: Workflow): ValidationResult {
   };
 }
 
+function normalizeDependsOn(dependsOn: string | string[] | undefined): string[] {
+  if (!dependsOn) return [];
+  if (Array.isArray(dependsOn)) return dependsOn;
+  return dependsOn.split(',').map((dep) => dep.trim()).filter(Boolean);
+}
+
+function validateDependencyGraph(steps: Step[]): ValidationError[] {
+  const errors: ValidationError[] = [];
+  const stepIds = new Set(steps.map((step) => step.id));
+  const depsByStep = new Map<string, string[]>();
+
+  for (const step of steps) {
+    const deps = normalizeDependsOn(step.depends_on);
+    depsByStep.set(step.id, deps);
+    for (const dep of deps) {
+      if (!stepIds.has(dep)) {
+        errors.push({
+          severity: 'error',
+          step: step.id,
+          message: `Step "${step.id}" depends on missing step "${dep}"`,
+          suggestion: `Add step "${dep}" or remove it from ${step.id}.depends_on`,
+        });
+      }
+    }
+  }
+
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  function visit(stepId: string, chain: string[]): void {
+    if (visiting.has(stepId)) {
+      errors.push({
+        severity: 'error',
+        step: stepId,
+        message: `Circular dependency detected: ${[...chain, stepId].join(' -> ')}`,
+        suggestion: 'Remove one depends_on edge from the cycle',
+      });
+      return;
+    }
+    if (visited.has(stepId)) return;
+    visiting.add(stepId);
+    for (const dep of depsByStep.get(stepId) ?? []) {
+      if (stepIds.has(dep)) visit(dep, [...chain, stepId]);
+    }
+    visiting.delete(stepId);
+    visited.add(stepId);
+  }
+  for (const step of steps) visit(step.id, []);
+  return errors;
+}
+
+export function validateWorkflowDefinition(workflow: Workflow): ValidationResult {
+  const result = validateOutputs(workflow);
+  const dependencyErrors = validateDependencyGraph(workflow.steps);
+  if (dependencyErrors.length > 0) {
+    result.errors.push(...dependencyErrors);
+    result.valid = false;
+  }
+  return result;
+}
+
+function validateModelRegistry(workflow: WorkflowWithAgentOutputs): ValidationError[] {
+  const result = validateWorkflowModels(workflow as unknown as WorkflowSpec);
+  return result.errors.map((err) => ({
+    severity: 'error',
+    step: err.usage,
+    message: err.message,
+    suggestion: err.suggestion,
+  }));
+}
+
 /**
  * Load and parse workflow.yml
  */
@@ -235,7 +311,12 @@ export async function validateWorkflow(workflowId: string): Promise<ValidationRe
   const workflowDir = paths.resolveWorkflowDir(workflowId);
   
   const workflow = loadWorkflow(workflowDir);
-  const result = validateOutputs(workflow);
+  const result = validateWorkflowDefinition(workflow);
+  const modelErrors = validateModelRegistry(workflow as WorkflowWithAgentOutputs);
+  if (modelErrors.length > 0) {
+    result.errors.push(...modelErrors);
+    result.valid = false;
+  }
   return { ...result, workflowId: workflow.id };
 }
 

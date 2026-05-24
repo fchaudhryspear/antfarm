@@ -18,7 +18,9 @@ import { ping as heartbeatPing, clearSession as heartbeatClear } from "../heartb
 import type { WorkflowStepFailure } from "./types.js";
 import { validateStepOutput, validateContractAndDispatch } from "../validate-step-output.js";
 import { validateConsolidateInputs } from "../validate-consolidate-inputs.js";
+import { validateStructuredFindingsJson } from "../validate-structured-findings.js";
 import { recordAgentRun, recordAgentRetry, getAgentStats } from "../agent-retry-stats.js";
+import { selectImmediateDispatchAgents } from "./gateway-concurrency.js";
 
 // ── Model Escalation on Retry ───────────────────────────────────────
 // OpenClaw ops policy (May 10, 2026): do not route automatic retries to
@@ -1257,6 +1259,30 @@ export function completeStep(stepId: string, output: string): { advanced: boolea
     return { advanced: false, runCompleted: false };
   }
 
+  const outputValuesForValidation = parseOutputKeyValues(output);
+  const structuredFindingsJson = outputValuesForValidation["STRUCTURED_FINDINGS_JSON"];
+  if (structuredFindingsJson) {
+    const findingsResult = validateStructuredFindingsJson(structuredFindingsJson);
+    if (!findingsResult.valid) {
+      const retryRow = db.prepare("SELECT retry_count, max_retries FROM steps WHERE id = ?").get(stepId) as { retry_count: number; max_retries: number };
+      const newRetry = retryRow.retry_count + 1;
+      const reason = `STRUCTURED_FINDINGS_JSON validation failed: ${findingsResult.errors.join("; ")}`;
+      logger.warn(reason, { runId: step.run_id, stepId: step.step_id });
+      emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: reason });
+      if (newRetry > retryRow.max_retries) {
+        db.prepare("UPDATE steps SET status = 'failed', output = ?, retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(reason, newRetry, stepId);
+        db.prepare("UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?").run(step.run_id);
+        emitEvent({ ts: new Date().toISOString(), event: "run.failed", runId: step.run_id, workflowId: getWorkflowId(step.run_id), detail: `Structured findings validation retries exhausted for ${step.step_id}` });
+        cancelAllSiblingSteps(step.run_id, stepId);
+        scheduleRunCronTeardown(step.run_id);
+        return { advanced: false, runCompleted: false };
+      }
+      db.prepare("UPDATE steps SET status = 'pending', output = NULL, retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(newRetry, stepId);
+      escalateStepModel(stepId);
+      return { advanced: false, runCompleted: false };
+    }
+  }
+
   // Issue #340: Consolidate-PR input validation — check all prior step outputs
   if (isConsolidate) {
     const consolidateValidation = validateConsolidateInputs(step.run_id, output);
@@ -1736,11 +1762,14 @@ function advancePipeline(runId: string): { advanced: boolean; runCompleted: bool
 // and spawn sessions for each unblocked agent instead of waiting for cron.
 
 export function triggerImmediateStepEnqueue(dispatchedAgentIds: string[], runId: string): void {
-  // Deduplicate agent IDs (multiple steps may share an agent)
-  const uniqueAgents = [...new Set(dispatchedAgentIds)];
+  const selection = selectImmediateDispatchAgents(dispatchedAgentIds);
   const wfId = getWorkflowId(runId);
 
-  for (const agentId of uniqueAgents) {
+  if (selection.deferred.length > 0) {
+    logger.warn(`Gateway immediate dispatch capped at ${selection.cap}; ${selection.deferred.length} agent(s) left pending for cron pickup`, { runId, workflowId: wfId });
+  }
+
+  for (const agentId of selection.selected) {
     // Fire-and-forget: claim step and spawn session in background
     // This runs async — if it fails, the regular cron will pick it up within 60s
     setImmediate(async () => {

@@ -50,6 +50,7 @@ export type LoopConfig = {
 export type WorkflowStep = {
   id: string;
   agent: string;
+  depends_on?: string | string[];
   type?: "single" | "loop";
   loop?: LoopConfig;
   input: string;
