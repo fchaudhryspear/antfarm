@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0.0",
+  "issue_id": "ADP-388",
+  "run_id": "gateway-load-2026-05-24T05-32-00-648Z",
+  "generated_at": "2026-05-24T05:32:00.648Z",
+  "environment": {
+    "kind": "isolated_staging",
+    "host": "127.0.0.1",
+    "port": 62532,
+    "live_gateway_touched": false,
+    "production_sessions_touched": false
+  },
+  "target": {
+    "baseline_concurrent_sessions": 5,
+    "multiplier": 5,
+    "target_concurrent_sessions": 25,
+    "sustained_seconds": 10
+  },
+  "lifecycle": {
+    "created_sessions": 25,
+    "heartbeat_count": 2275,
+    "teardown_count": 25,
+    "active_sessions_after_teardown": 0,
+    "heartbeat_timeout_invariant_verified": true
+  },
+  "stability": {
+    "connection_drops": 0,
+    "failed_requests": 0,
+    "rss_start_bytes": 58540032,
+    "rss_peak_bytes": 178749440,
+    "rss_end_bytes": 178749440,
+    "oom_detected": false,
+    "launchagent_stability": "stable"
+  },
+  "cap_policy": {
+    "max_parallel_units": 25,
+    "reason": "isolated staging sustained 25 concurrent sessions; cap may be set to 25 for prototype scope"
+  },
+  "pass": true,
+  "blockers": []
+}

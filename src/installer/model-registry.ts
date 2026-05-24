@@ -17,10 +17,25 @@ type ModelFamily = {
   allowed_workflow_stages?: string[];
 };
 
+export type RegistryModel = {
+  id: string;
+  family: string;
+  provider: string;
+  aliases?: string[];
+  status?: string;
+  strengths?: string[];
+  fallback_chain: string[];
+  eligible_roles?: string[];
+  eligible_stages: string[];
+  cost_per_1k_tokens: number;
+  deprecated: boolean;
+};
+
 export type ModelRegistry = {
   version: number;
   policy?: ModelPolicy;
-  families: Record<string, ModelFamily>;
+  models?: RegistryModel[];
+  families?: Record<string, ModelFamily>;
 };
 
 export type ModelValidationError = {
@@ -80,15 +95,84 @@ function inferWorkflowStage(workflowId: string | undefined): string {
 export function loadModelRegistry(registryPath = process.env.ANTFARM_MODEL_REGISTRY ?? MODEL_REGISTRY_PATH): ModelRegistry {
   const raw = fs.readFileSync(registryPath, "utf-8");
   const parsed = YAML.parse(raw) as ModelRegistry;
-  if (!parsed?.families || typeof parsed.families !== "object") {
-    throw new Error(`model_registry.yaml missing families at ${registryPath}`);
+  const schemaErrors = validateModelRegistryShape(parsed);
+  if (schemaErrors.length > 0) {
+    throw new Error(`model_registry.yaml invalid at ${registryPath}:\n${schemaErrors.join("\n")}`);
   }
   return parsed;
 }
 
+export function validateModelRegistryShape(registry: unknown): string[] {
+  const errors: string[] = [];
+  if (!registry || typeof registry !== "object" || Array.isArray(registry)) {
+    return ["registry root must be an object"];
+  }
+
+  const data = registry as ModelRegistry;
+  if (typeof data.version !== "number") errors.push("version must be a number");
+  if (!Array.isArray(data.models) && (!data.families || typeof data.families !== "object")) {
+    errors.push("registry must define models[] or legacy families{}");
+  }
+
+  if (Array.isArray(data.models)) {
+    const ids = new Set<string>();
+    for (const [index, model] of data.models.entries()) {
+      const prefix = `models[${index}]`;
+      if (!model || typeof model !== "object" || Array.isArray(model)) {
+        errors.push(`${prefix} must be an object`);
+        continue;
+      }
+      for (const key of ["id", "family", "provider"] as const) {
+        if (typeof model[key] !== "string" || model[key].trim().length === 0) {
+          errors.push(`${prefix}.${key} is required`);
+        }
+      }
+      if (typeof model.id === "string") {
+        if (ids.has(normalize(model.id))) errors.push(`${prefix}.id duplicates another model id`);
+        ids.add(normalize(model.id));
+      }
+      if (!Array.isArray(model.fallback_chain) || !model.fallback_chain.every((item) => typeof item === "string")) {
+        errors.push(`${prefix}.fallback_chain must be a string array`);
+      }
+      if (!Array.isArray(model.eligible_stages) || model.eligible_stages.length === 0
+        || !model.eligible_stages.every((item) => typeof item === "string" && item.trim().length > 0)) {
+        errors.push(`${prefix}.eligible_stages must be a non-empty string array`);
+      }
+      if (typeof model.cost_per_1k_tokens !== "number" || Number.isNaN(model.cost_per_1k_tokens) || model.cost_per_1k_tokens < 0) {
+        errors.push(`${prefix}.cost_per_1k_tokens must be a non-negative number`);
+      }
+      if (typeof model.deprecated !== "boolean") errors.push(`${prefix}.deprecated must be boolean`);
+      if (model.eligible_roles !== undefined
+        && (!Array.isArray(model.eligible_roles) || !model.eligible_roles.every((item) => typeof item === "string"))) {
+        errors.push(`${prefix}.eligible_roles must be a string array when present`);
+      }
+      if (model.aliases !== undefined
+        && (!Array.isArray(model.aliases) || !model.aliases.every((item) => typeof item === "string"))) {
+        errors.push(`${prefix}.aliases must be a string array when present`);
+      }
+    }
+  }
+  return errors;
+}
+
+function modelToFamily(model: RegistryModel): ModelFamily {
+  return {
+    canonical: model.id,
+    aliases: model.aliases,
+    status: model.deprecated ? "deprecated" : (model.status ?? "active"),
+    strengths: model.strengths,
+    allowed_roles: model.eligible_roles,
+    allowed_workflow_stages: model.eligible_stages,
+  };
+}
+
 export function resolveModelFamily(model: string, registry: ModelRegistry): ModelFamily | null {
   const needle = normalize(model);
-  for (const family of Object.values(registry.families)) {
+  for (const registered of registry.models ?? []) {
+    const candidates = [registered.id, ...(registered.aliases ?? [])].map(normalize);
+    if (candidates.includes(needle)) return modelToFamily(registered);
+  }
+  for (const family of Object.values(registry.families ?? {})) {
     const candidates = [family.canonical, ...(family.aliases ?? [])].map(normalize);
     if (candidates.includes(needle)) return family;
   }
