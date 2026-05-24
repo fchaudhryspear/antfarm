@@ -178,6 +178,27 @@ export function migrateDb(db: DatabaseSync): void {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS gateway_load_test_runs (
+      id TEXT PRIMARY KEY,
+      issue_id TEXT NOT NULL,
+      environment TEXT NOT NULL,
+      baseline_concurrent_sessions INTEGER NOT NULL,
+      target_concurrent_sessions INTEGER NOT NULL,
+      sustained_seconds REAL NOT NULL,
+      created_sessions INTEGER NOT NULL,
+      heartbeat_count INTEGER NOT NULL,
+      teardown_count INTEGER NOT NULL,
+      connection_drops INTEGER NOT NULL,
+      oom_detected INTEGER NOT NULL,
+      heartbeat_timeout_passed INTEGER NOT NULL,
+      launchagent_stability TEXT NOT NULL,
+      max_parallel_units INTEGER NOT NULL,
+      pass INTEGER NOT NULL,
+      evidence_path TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_factory_items_status ON factory_items(status, lifecycle_stage);
     CREATE INDEX IF NOT EXISTS idx_factory_runs_item ON factory_runs(factory_item_id, status);
     CREATE INDEX IF NOT EXISTS idx_factory_context_packs_item ON factory_context_packs(factory_item_id, stage, agent_role);
@@ -186,6 +207,7 @@ export function migrateDb(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_factory_gates_item ON factory_gates(factory_item_id, gate_type);
     CREATE INDEX IF NOT EXISTS idx_factory_events_item ON factory_events(factory_item_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_obsidian_mirror_events_item ON obsidian_mirror_events(factory_item_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_gateway_load_test_runs_issue ON gateway_load_test_runs(issue_id, created_at);
   `);
 
   // Add columns to steps table for backwards compat
