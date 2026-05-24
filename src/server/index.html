@@ -125,6 +125,8 @@ select:focus{outline:none;border-color:#8ECFC0}
 /* ── Theme toggle ─────────────────────────────────────────────── */
 .theme-toggle{background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:#fff;cursor:pointer;padding:5px 8px;font-size:16px;line-height:1;transition:border-color .15s}
 .theme-toggle:hover{border-color:rgba(255,255,255,.5)}
+.mode-btn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:6px;color:#fff;cursor:pointer;padding:6px 10px;font-size:13px;line-height:1}
+.mode-btn:hover{border-color:rgba(255,255,255,.45);background:rgba(255,255,255,.14)}
 
 /* ── Board ─────────────────────────────────────────────────────── */
 .board{display:flex;gap:16px;padding:24px;overflow-x:auto;min-height:calc(100vh - 65px)}
@@ -177,7 +179,25 @@ select:focus{outline:none;border-color:#8ECFC0}
 /* ── Misc ──────────────────────────────────────────────────────── */
 .empty{color:var(--text-secondary);font-size:12px;text-align:center;padding:24px 8px}
 .refresh-note{color:rgba(255,255,255,.6);font-size:11px;margin-left:auto}
+.factory-dashboard{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px;padding:24px;width:100%}
+.factory-band{grid-column:span 12;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:14px;box-shadow:0 2px 8px var(--shadow)}
+.factory-band h2{font-size:14px;font-weight:700;margin-bottom:10px;color:var(--text-primary)}
+.factory-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.metric{background:var(--bg-surface-alt);border:1px solid var(--border-light);border-radius:6px;padding:10px}
+.metric-value{font-size:22px;font-weight:700;color:var(--accent-green)}
+.metric-label{font-size:11px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.3px}
+.factory-item{border-top:1px solid var(--border-light);padding:12px 0}
+.factory-item:first-of-type{border-top:0}
+.factory-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+.factory-title{font-size:13px;font-weight:700;color:var(--text-primary)}
+.factory-sub{font-size:11px;color:var(--text-secondary);font-family:'Geist Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.factory-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:8px}
+.factory-cell{background:var(--bg-surface-alt);border:1px solid var(--border-light);border-radius:6px;padding:8px;min-height:62px}
+.factory-cell-title{font-size:10px;color:var(--text-secondary);text-transform:uppercase;font-weight:700;margin-bottom:4px}
+.factory-cell-body{font-size:12px;color:var(--text-primary);line-height:1.45;word-break:break-word}
+.command{font-family:'Geist Mono',monospace;font-size:10px;background:var(--bg-code);border:1px solid var(--border);border-radius:4px;padding:4px;white-space:pre-wrap;word-break:break-word;margin-top:4px}
 @media(max-width:768px){.board{flex-direction:column}.column{min-width:unset}}
+@media(max-width:960px){.factory-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.factory-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .story-open{display:block!important}
 .story-chevron-open{transform:rotate(90deg)}
 .step-open{display:block!important}
@@ -210,6 +230,7 @@ select:focus{outline:none;border-color:#8ECFC0}
 <header>
   <h1><span>antfarm</span> dashboard</h1>
   <select id="wf-select"><option value="">Loading...</option></select>
+  <button class="mode-btn" id="factory-mode" title="Operator dashboard">Factory</button>
   <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">☀️</button>
   <div class="medic-badge" id="medic-badge" onclick="toggleMedicPanel()" title="Medic watchdog status">
     <span class="medic-dot unknown" id="medic-dot"></span>
@@ -277,6 +298,86 @@ function selectWorkflow(id) {
   currentWf = workflows.find(w => w.id === id) || null;
   if (currentWf) loadRuns();
   else document.getElementById('board').innerHTML = '<div class="empty" style="margin:auto">Select a workflow</div>';
+}
+
+function shortId(id) { return id ? String(id).slice(0, 8) : '-'; }
+function latest(items) { return items && items.length ? items[0] : null; }
+function countStatus(items, status) { return (items || []).filter(item => item.status === status).length; }
+
+async function loadFactoryDashboard() {
+  currentWf = null;
+  document.getElementById('wf-select').value = '';
+  const data = await fetchJSON('/api/factory/dashboard');
+  renderFactoryDashboard(data);
+}
+
+function renderFactoryDashboard(data) {
+  const board = document.getElementById('board');
+  const items = data.items || [];
+  const activeRuns = data.activeRuns || [];
+  const timeline = data.timeline || [];
+  const itemHTML = items.length === 0
+    ? '<div class="empty">No factory items yet.</div>'
+    : items.map(detail => {
+        const item = detail.item;
+        const run = detail.latestRun;
+        const gate = latest(detail.gates);
+        const artifact = latest(detail.artifacts);
+        const audit = latest(detail.auditEvents);
+        const deployment = latest(detail.production?.deploymentEvents);
+        const controls = detail.recoveryControls;
+        const synthesis = latest(detail.synthesisLinks);
+        const statusClass = item.status === 'done' ? 'done' : item.status === 'blocked' ? 'blocked' : item.status;
+        const commands = controls ? [
+          controls.canPause ? controls.commands.pause : '',
+          controls.canResume ? controls.commands.resume : '',
+          controls.canRetry ? controls.commands.retry : '',
+        ].filter(Boolean).join('\n') : '';
+        return `<div class="factory-item">
+          <div class="factory-row">
+            <div>
+              <div class="factory-title">${esc(item.title)}</div>
+              <div class="factory-sub">${esc(item.repo || '')} ${esc(item.issue_url || '')}</div>
+            </div>
+            <span class="badge badge-${statusClass}">${esc(item.status)} · ${esc(item.lifecycle_stage)}</span>
+          </div>
+          <div class="factory-grid">
+            <div class="factory-cell"><div class="factory-cell-title">Active Run</div><div class="factory-cell-body">${run ? `${shortId(run.id)} · ${esc(run.status)}<br>${esc(run.workflow_id)}` : 'No run'}</div></div>
+            <div class="factory-cell"><div class="factory-cell-title">Gate</div><div class="factory-cell-body">${gate ? `${esc(gate.gate_type)}<br><span class="badge badge-${esc(gate.status)}">${esc(gate.status)}</span>` : 'No gates'}</div></div>
+            <div class="factory-cell"><div class="factory-cell-title">PR / Artifact</div><div class="factory-cell-body">${artifact ? `<a href="${esc(artifact.path_or_url)}" target="_blank" rel="noreferrer">${esc(artifact.title)}</a><br>${esc(artifact.artifact_type)}` : 'No artifacts'}</div></div>
+            <div class="factory-cell"><div class="factory-cell-title">Deploy</div><div class="factory-cell-body">${deployment ? `${esc(deployment.environment)} · ${esc(deployment.status)}<br>${esc(deployment.next_route)}` : 'No deployment'}</div></div>
+            <div class="factory-cell"><div class="factory-cell-title">Budget</div><div class="factory-cell-body">${run?.budget_json ? esc(run.budget_json) : 'No budget'}</div></div>
+            <div class="factory-cell"><div class="factory-cell-title">Recovery</div><div class="factory-cell-body">${commands ? `<div class="command">${esc(commands)}</div>` : 'No active controls'}</div></div>
+          </div>
+          <div class="factory-grid">
+            <div class="factory-cell" style="grid-column:span 3"><div class="factory-cell-title">Audit Evidence</div><div class="factory-cell-body">${audit ? `${esc(audit.command)} by ${esc(audit.operator)}<br>${esc(audit.created_at)}` : 'No audit events'}</div></div>
+            <div class="factory-cell" style="grid-column:span 3"><div class="factory-cell-title">Obsidian Synthesis</div><div class="factory-cell-body">${synthesis ? `<a href="${esc(synthesis.path_or_url)}" target="_blank" rel="noreferrer">${esc(synthesis.title)}</a><br>Source: factory_artifacts.${shortId(synthesis.id)}` : 'No synthesis artifact'}</div></div>
+          </div>
+        </div>`;
+      }).join('');
+
+  board.innerHTML = `<div class="factory-dashboard">
+    <section class="factory-band">
+      <h2>Operator Dashboard</h2>
+      <div class="factory-metrics">
+        <div class="metric"><div class="metric-value">${items.length}</div><div class="metric-label">Factory Items</div></div>
+        <div class="metric"><div class="metric-value">${activeRuns.length}</div><div class="metric-label">Active Runs</div></div>
+        <div class="metric"><div class="metric-value">${countStatus(data.queue, 'blocked')}</div><div class="metric-label">Blocked Queue</div></div>
+        <div class="metric"><div class="metric-value">$${Number(data.budget?.maxUsd || 0).toFixed(0)}</div><div class="metric-label">Active Budget Cap</div></div>
+      </div>
+    </section>
+    <section class="factory-band">
+      <h2>Queue, Runs, Gates, Artifacts, Recovery</h2>
+      ${itemHTML}
+    </section>
+    <section class="factory-band">
+      <h2>Timeline</h2>
+      ${timeline.length ? timeline.slice(0, 20).map(evt => `<div class="factory-row" style="border-top:1px solid var(--border-light);padding:7px 0;margin:0">
+        <div class="factory-cell-body">${esc(evt.kind)} <span class="factory-sub">${esc(evt.source)}</span></div>
+        <div class="factory-sub">${esc(evt.createdAt)}</div>
+      </div>`).join('') : '<div class="empty">No timeline events.</div>'}
+    </section>
+  </div>`;
 }
 
 async function loadRuns() {
@@ -489,6 +590,7 @@ async function loadStories(runId) {
 }
 
 document.getElementById('wf-select').addEventListener('change', e => selectWorkflow(e.target.value));
+document.getElementById('factory-mode').addEventListener('click', () => loadFactoryDashboard());
 loadWorkflows();
 setInterval(() => { if (currentWf) loadRuns(); }, 30000);
 
