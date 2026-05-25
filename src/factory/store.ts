@@ -66,6 +66,7 @@ export type FactoryContextPack = {
   path: string;
   checksum: string;
   manifest_json: string;
+  redaction_ruleset_version: string | null;
   created_at: string;
 };
 
@@ -196,13 +197,14 @@ export function recordFactoryContextPack(input: {
   path: string;
   checksum: string;
   manifest: unknown;
+  redactionRulesetVersion?: string;
 }, db: DatabaseSync = getDb()): FactoryContextPack {
   const id = input.id ?? crypto.randomUUID();
   db.prepare(`
     INSERT INTO factory_context_packs (
       id, factory_item_id, factory_run_id, stage, agent_role, path, checksum,
-      manifest_json, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      manifest_json, redaction_ruleset_version, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     input.factoryItemId,
@@ -212,6 +214,7 @@ export function recordFactoryContextPack(input: {
     input.path,
     input.checksum,
     JSON.stringify(input.manifest),
+    input.redactionRulesetVersion ?? (input.manifest as { redaction_ruleset_version?: string }).redaction_ruleset_version ?? null,
     nowIso(),
   );
   return db.prepare("SELECT * FROM factory_context_packs WHERE id = ?").get(id) as FactoryContextPack;

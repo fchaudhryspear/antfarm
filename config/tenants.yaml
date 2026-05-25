@@ -1,0 +1,21 @@
+tenants:
+  utility_valet:
+    display_name: Utility Valet
+    compliance_class: default
+    pii_source_of_truth: Zoho
+  spearhead:
+    display_name: Spearhead
+    compliance_class: default
+  flobase:
+    display_name: Flobase
+    compliance_class: finance
+  credologi:
+    display_name: Credologi
+    compliance_class: finance
+  fcrp_capital:
+    display_name: FCRP Capital
+    compliance_class: default
+    status_note: pending verification
+  starship_residential:
+    display_name: Starship Residential
+    compliance_class: default
