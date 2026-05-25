@@ -6,6 +6,7 @@ import { createDashboardSession, enforceTenantMutation, enforceTenantRead } from
 import { opaqueSubjectHandle, recordNotificationDeletionAttempt, validateNotificationPayload } from "./notification-policy.js";
 import { recordDeploymentEvent, recordSmokeTestStub } from "./production-gates.js";
 import { assertModelEligible, redactText } from "./redaction.js";
+import { hashedAuditPayload, requestRtbf, subjectIdHash, transitionRtbf, upsertSubjectRegistry } from "./rtbf.js";
 import { evaluatePolicy, loadTenantConfig } from "./tenant-policy.js";
 
 function memoryDb(): DatabaseSync {
@@ -85,5 +86,81 @@ describe("v3.1 notification and production gate recording", () => {
     recordSmokeTestStub({ db, tenantId: "flobase", deploymentEventId: deployId, suite: "v3.1-manual-smoke", status: "passed" });
     assert.equal((db.prepare("SELECT COUNT(*) AS n FROM factory_deployment_events").get() as { n: number }).n, 1);
     assert.equal((db.prepare("SELECT COUNT(*) AS n FROM factory_smoke_test_runs").get() as { n: number }).n, 1);
+  });
+});
+
+describe("v3.1 audit enforcement and RTBF", () => {
+  it("rejects malformed tenant audit rows and raw PII audit payloads", () => {
+    const db = memoryDb();
+    assert.throws(() => db.prepare(`
+      INSERT INTO factory_tenant_audit_log (id, event_type, tenant_id, payload_json, created_at)
+      VALUES ('bad_missing_tenant', 'rtbf_state_transition', NULL, '{}', datetime('now'))
+    `).run());
+    assert.throws(() => db.prepare(`
+      INSERT INTO factory_tenant_audit_log (id, event_type, tenant_id, payload_json, created_at)
+      VALUES ('bad_unknown', 'surprise_event', 'flobase', '{}', datetime('now'))
+    `).run());
+    assert.throws(() => db.prepare(`
+      INSERT INTO factory_tenant_audit_log (id, event_type, tenant_id, event_chain_type, payload_json, created_at)
+      VALUES ('bad_pii', 'rtbf_state_transition', 'flobase', 'rtbf_workflow', '{"email":"person@example.com"}', datetime('now'))
+    `).run());
+  });
+
+  it("rejects raw PII in factory_events payloads", () => {
+    const db = memoryDb();
+    db.prepare(`
+      INSERT INTO factory_items (id, title, description, created_at, updated_at, tenant_id)
+      VALUES ('fi_pii', 'PII test', '', datetime('now'), datetime('now'), 'flobase')
+    `).run();
+    assert.throws(() => db.prepare(`
+      INSERT INTO factory_events (id, factory_item_id, event_type, payload_json, created_at, tenant_id)
+      VALUES ('fe_pii', 'fi_pii', 'workflow.note', '{"account":"123456789"}', datetime('now'), 'flobase')
+    `).run());
+  });
+
+  it("tracks finance RTBF without storing natural subject identifiers", () => {
+    const db = memoryDb();
+    const subjectHash = upsertSubjectRegistry({
+      db,
+      tenantId: "flobase",
+      tenantLookupPepper: "tenant-pepper",
+      naturalSubjectId: "person@example.com",
+      envelopeKeyId: "kms://tenant/flobase/subject/opaque",
+    });
+    assert.equal(subjectHash, subjectIdHash("tenant-pepper", "person@example.com"));
+    assert.ok(!subjectHash.includes("person"));
+    requestRtbf({ db, id: "rtbf_1", tenantId: "flobase", subjectIdHash: subjectHash, requestedBy: "faisal" });
+    const reversibleProof = transitionRtbf({
+      db,
+      requestId: "rtbf_1",
+      tenantId: "flobase",
+      subjectIdHash: subjectHash,
+      nextState: "reversible",
+      actor: "faisal",
+      proofSigningSecret: "proof-secret",
+      kmsDeletionEvidence: { key_state: "disabled", backup_state: "retained_reversible" },
+    });
+    const finalizedProof = transitionRtbf({
+      db,
+      requestId: "rtbf_1",
+      tenantId: "flobase",
+      subjectIdHash: subjectHash,
+      nextState: "finalized",
+      actor: "faisal",
+      proofSigningSecret: "proof-secret",
+      kmsDeletionEvidence: { key_state: "deleted", backup_state: "destroyed" },
+    });
+    assert.notEqual(reversibleProof, finalizedProof);
+    const proofRows = db.prepare("SELECT payload_json, subject_id_hash FROM factory_tenant_audit_log WHERE event_type = 'rtbf_state_transition'").all() as Array<{ payload_json: string; subject_id_hash: string }>;
+    assert.equal(proofRows.length, 2);
+    assert.equal(proofRows.every((row) => row.subject_id_hash === subjectHash), true);
+    assert.equal(proofRows.some((row) => row.payload_json.includes("person@example.com")), false);
+  });
+
+  it("keeps future PII tenant hashing testable and opaque", () => {
+    const first = subjectIdHash("future-pii-pepper", "lease-123456");
+    const second = subjectIdHash("future-pii-pepper-rotated", "lease-123456");
+    assert.notEqual(first, second);
+    assert.deepEqual(Object.keys(hashedAuditPayload("envelope", { lease: "lease-123456" })), ["lease_hash"]);
   });
 });
