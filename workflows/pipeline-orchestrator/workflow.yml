@@ -72,7 +72,7 @@ polling:
 agents:
   - id: complexity-assessor
     name: Complexity Assessor
-    role: triage
+    role: analysis
     workspace:
       baseDir: agents/complexity-assessor
       files:
@@ -81,7 +81,7 @@ agents:
 
   - id: pipeline-controller
     name: Pipeline Controller
-    role: orchestrator
+    role: coding
     workspace:
       baseDir: agents/pipeline-controller
       files:
@@ -90,7 +90,7 @@ agents:
 
   - id: gate-keeper
     name: Gate Keeper
-    role: gate
+    role: verification
     workspace:
       baseDir: agents/gate-keeper
       files:
@@ -99,7 +99,7 @@ agents:
 
   - id: pipeline-reporter
     name: Pipeline Reporter
-    role: reporter
+    role: analysis
     workspace:
       baseDir: agents/pipeline-reporter
       files:

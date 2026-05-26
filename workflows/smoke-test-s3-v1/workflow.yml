@@ -1,3 +1,4 @@
+id: smoke-test-s3-v1
 name: smoke-test-s3-v1
 version: "1.0"
 description: Post-deploy smoke test for S3 + CloudFront frontend deployment
@@ -25,6 +26,34 @@ context:
   critical_assets:
     - "index.html"
 
+agents:
+  - id: smoke-s3-waiter
+    name: Smoke S3 Waiter
+    role: analysis
+    workspace:
+      baseDir: agents/smoke-s3-waiter
+      files:
+        AGENTS.md: agents/smoke-s3-waiter/AGENTS.md
+    model: minimax-m2.7:cloud
+
+  - id: smoke-s3-checker
+    name: Smoke S3 Checker
+    role: testing
+    workspace:
+      baseDir: agents/smoke-s3-checker
+      files:
+        AGENTS.md: agents/smoke-s3-checker/AGENTS.md
+    model: minimax-m2.7:cloud
+
+  - id: smoke-s3-reporter
+    name: Smoke S3 Reporter
+    role: analysis
+    workspace:
+      baseDir: agents/smoke-s3-reporter
+      files:
+        AGENTS.md: agents/smoke-s3-reporter/AGENTS.md
+    model: minimax-m2.7:cloud
+
 steps:
   - id: wait-propagation
     name: Wait for CloudFront invalidation to propagate
@@ -33,6 +62,7 @@ steps:
     delivery:
       channel: telegram
     timeout_minutes: 5
+    expects: 'WAIT_COMPLETE:'
     input: |
       Wait 90 seconds for CloudFront invalidation to propagate before running smoke tests.
       This is the window where a cache-race blank page could occur.
@@ -49,6 +79,7 @@ steps:
       channel: telegram
     depends_on: [wait-propagation]
     timeout_minutes: 5
+    expects: 'INVALIDATION_STATUS:'
     input: |
       Check the status of the most recent CloudFront invalidation for distribution {{ cf_distribution_id }}.
 
@@ -72,6 +103,7 @@ steps:
       channel: telegram
     depends_on: [check-invalidation-status]
     timeout_minutes: 5
+    expects: 'SMOKE_INDEX_PASS:'
     input: |
       Fetch the index page and verify it loads without JS 404 errors.
 
@@ -113,6 +145,7 @@ steps:
     depends_on: [smoke-index-page]
     condition: "SMOKE_INDEX_PASS: true"
     timeout_minutes: 10
+    expects: 'SMOKE_PORTAL_PASS:'
     input: |
       For each critical path in {{ portal_url }}, verify the page loads without JS 404 errors.
 
@@ -156,6 +189,7 @@ steps:
       channel: telegram
     depends_on: [smoke-index-page, smoke-portal-routes]
     timeout_minutes: 3
+    expects: 'SMOKE_SUMMARY:'
     input: |
       Compile smoke test results and post a summary to Telegram.
 

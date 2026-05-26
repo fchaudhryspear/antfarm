@@ -1,3 +1,4 @@
+id: smoke-test-v1
 name: smoke-test-v1
 version: "1.0"
 description: Post-merge smoke test gate for Flobase portal Lambda
@@ -18,6 +19,34 @@ context:
   aws_profile: "security"
   aws_region: "us-east-1"
 
+agents:
+  - id: smoke-deployer
+    name: Smoke Deployer
+    role: coding
+    workspace:
+      baseDir: agents/smoke-deployer
+      files:
+        AGENTS.md: agents/smoke-deployer/AGENTS.md
+    model: minimax-m2.7:cloud
+
+  - id: smoke-tester
+    name: Smoke Tester
+    role: testing
+    workspace:
+      baseDir: agents/smoke-tester
+      files:
+        AGENTS.md: agents/smoke-tester/AGENTS.md
+    model: minimax-m2.7:cloud
+
+  - id: smoke-reverter
+    name: Smoke Reverter
+    role: coding
+    workspace:
+      baseDir: agents/smoke-reverter
+      files:
+        AGENTS.md: agents/smoke-reverter/AGENTS.md
+    model: minimax-m2.7:cloud
+
 steps:
   - id: deploy
     name: Deploy staging Lambda
@@ -26,6 +55,7 @@ steps:
     delivery:
       channel: telegram
     timeout_minutes: 35
+    expects: 'DEPLOY_STATUS:'
     input: |
       Deploy the staging Lambda function from {{ repo_path }}.
 
@@ -52,6 +82,7 @@ steps:
       channel: telegram
     depends_on: [deploy]
     timeout_minutes: 35
+    expects: 'SMOKE_PASS:'
     input: |
       Run 3 smoke tests against Lambda function {{ function_name }}.
 
@@ -90,6 +121,7 @@ steps:
     depends_on: [smoke-test]
     condition: "SMOKE_PASS: false"
     timeout_minutes: 30
+    expects: 'STATUS:'
     input: |
       Smoke test failed. Create a revert PR in {{ repo_path }}.
 
