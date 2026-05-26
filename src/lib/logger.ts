@@ -5,6 +5,8 @@ import os from "node:os";
 
 const LOG_DIR = path.join(os.homedir(), ".openclaw", "antfarm", "logs");
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB
+const LOCK_RETRY_DELAY_MS = 10;
+const STALE_LOCK_MS = 30_000;
 
 export type LogLevel = "info" | "warn" | "error" | "debug";
 
@@ -25,6 +27,10 @@ function getLogDir(): string {
 
 function getLogFile(): string {
   return path.join(getLogDir(), "workflow.log");
+}
+
+function getLockFile(): string {
+  return path.join(getLogDir(), "workflow.log.lock");
 }
 
 function ensureLogDirSync(): void {
@@ -54,6 +60,45 @@ function rotateIfNeededSync(): void {
   }
 }
 
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function withLogLockSync(writeLog: () => void): void {
+  const lockFile = getLockFile();
+  let lockFd: number | undefined;
+
+  while (lockFd === undefined) {
+    try {
+      lockFd = fs.openSync(lockFile, "wx");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") {
+        throw error;
+      }
+      try {
+        const stats = fs.statSync(lockFile);
+        if (Date.now() - stats.mtimeMs > STALE_LOCK_MS) {
+          fs.rmSync(lockFile, { force: true });
+          continue;
+        }
+      } catch (statError) {
+        if ((statError as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw statError;
+        }
+      }
+      sleepSync(LOCK_RETRY_DELAY_MS);
+    }
+  }
+
+  try {
+    writeLog();
+  } finally {
+    fs.closeSync(lockFd);
+    fs.rmSync(lockFile, { force: true });
+  }
+}
+
 export function formatEntry(entry: LogEntry): string {
   const parts = [entry.timestamp, `[${entry.level.toUpperCase()}]`];
 
@@ -78,7 +123,6 @@ export function log(
 ): void {
   try {
     ensureLogDirSync();
-    rotateIfNeededSync();
 
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
@@ -88,7 +132,10 @@ export function log(
     };
 
     const line = formatEntry(entry) + "\n";
-    fs.appendFileSync(getLogFile(), line, "utf-8");
+    withLogLockSync(() => {
+      rotateIfNeededSync();
+      fs.appendFileSync(getLogFile(), line, "utf-8");
+    });
   } catch {
     // Logging must never throw into the caller
   }

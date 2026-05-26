@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { migrateDb } from "../db.js";
 import {
@@ -13,7 +14,7 @@ import {
   recordFactoryArtifact,
   recordRollbackPlan,
 } from "../factory/store.js";
-import { getFactoryDashboardSnapshot } from "./dashboard.js";
+import { getFactoryDashboardSnapshot, startDashboard } from "./dashboard.js";
 
 function memoryDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -23,6 +24,33 @@ function memoryDb(): DatabaseSync {
 }
 
 describe("factory operator dashboard snapshot", () => {
+  it("binds to loopback and does not expose wildcard CORS by default", () => {
+    const originalListen = http.Server.prototype.listen;
+    const listenArgs: unknown[][] = [];
+    (http.Server.prototype.listen as unknown) = function (this: http.Server, ...args: unknown[]) {
+      listenArgs.push(args);
+      return this;
+    };
+
+    try {
+      const server = startDashboard(0);
+      assert.equal(listenArgs[0][0], 0);
+      assert.equal(listenArgs[0][1], "127.0.0.1");
+
+      let headers: http.OutgoingHttpHeaders = {};
+      const response = {
+        writeHead(_status: number, responseHeaders: http.OutgoingHttpHeaders) {
+          headers = responseHeaders;
+        },
+        end() {},
+      } as http.ServerResponse;
+      server.emit("request", { url: "/api/workflows" } as http.IncomingMessage, response);
+      assert.equal(headers["Access-Control-Allow-Origin"], undefined);
+    } finally {
+      http.Server.prototype.listen = originalListen;
+    }
+  });
+
   it("maps ledger entities into dashboard query contract", () => {
     const db = memoryDb();
     const intake = createOrLinkFactoryItem({

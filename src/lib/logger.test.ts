@@ -1,11 +1,15 @@
 import fs from "node:fs";
+import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { log, logger, formatEntry, readRecentLogs } from "./logger.js";
 import type { LogLevel } from "./logger.js";
+
+const execFileAsync = promisify(execFile);
 
 describe("logger", () => {
   let tempLogDir: string;
@@ -69,6 +73,33 @@ describe("logger", () => {
       assert.equal(fs.readFileSync(secondBackup, "utf-8"), previousBackup);
       assert.equal(fs.statSync(firstBackup).size, 5 * 1024 * 1024 + 1);
       assert.match(fs.readFileSync(logFile, "utf-8"), /\[INFO\] after rotation/);
+    });
+
+    it("preserves concurrent process log entries during rotation", async () => {
+      const logFile = path.join(tempLogDir, "workflow.log");
+      const loggerUrl = new URL("./logger.js", import.meta.url).href;
+
+      fs.writeFileSync(logFile, Buffer.alloc(5 * 1024 * 1024 + 1, "a"));
+
+      await Promise.all([
+        execFileAsync(process.execPath, [
+          "-e",
+          `import(${JSON.stringify(loggerUrl)}).then(({ log }) => log("info", "concurrent one"))`,
+        ], { env: { ...process.env, ANTFARM_LOG_DIR: tempLogDir } }),
+        execFileAsync(process.execPath, [
+          "-e",
+          `import(${JSON.stringify(loggerUrl)}).then(({ log }) => log("info", "concurrent two"))`,
+        ], { env: { ...process.env, ANTFARM_LOG_DIR: tempLogDir } }),
+      ]);
+
+      const combinedLogs = ["workflow.log", "workflow.log.1", "workflow.log.2"]
+        .map(file => path.join(tempLogDir, file))
+        .filter(file => fs.existsSync(file))
+        .map(file => fs.readFileSync(file, "utf-8"))
+        .join("\n");
+
+      assert.match(combinedLogs, /\[INFO\] concurrent one/);
+      assert.match(combinedLogs, /\[INFO\] concurrent two/);
     });
   });
 

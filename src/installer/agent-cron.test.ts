@@ -5,6 +5,7 @@ import path from "node:path";
 import { buildWorkPrompt } from "./agent-cron.js";
 
 const AGENT_CRON_SOURCE = path.resolve(import.meta.dirname, "../../src/installer/agent-cron.ts");
+const GATEWAY_API_SOURCE = path.resolve(import.meta.dirname, "../../src/installer/gateway-api.ts");
 
 describe("buildWorkPrompt", () => {
   it("documents the Antfarm CLI heredoc/pipe preflight whitelist", () => {
@@ -29,5 +30,22 @@ describe("workflow cron lifecycle CLI calls", () => {
     assert.doesNotMatch(source, /execSync\(`openclaw cron (?:disable|enable) \$\{job\.id\}`/);
     assert.match(source, /execFileSync\("openclaw", \["cron", "disable", job\.id\]/);
     assert.match(source, /execFileSync\("openclaw", \["cron", "enable", job\.id\]/);
+  });
+});
+
+describe("workflow cron deletion matching", () => {
+  it("uses exact-name deletion for single-cron reconciliation", () => {
+    const source = fs.readFileSync(AGENT_CRON_SOURCE, "utf-8");
+
+    assert.match(source, /deleteAgentCronJobByName\(cronName\)/);
+    assert.doesNotMatch(source, /deleteAgentCronJobs\(cronName\)/);
+  });
+
+  it("keeps prefix deletion exactness isolated in gateway helpers", () => {
+    const source = fs.readFileSync(GATEWAY_API_SOURCE, "utf-8");
+
+    assert.match(source, /export async function deleteAgentCronJobByName\(name: string\)/);
+    assert.match(source, /job\.name === name/);
+    assert.match(source, /job\.name\.startsWith\(namePrefix\)/);
   });
 });

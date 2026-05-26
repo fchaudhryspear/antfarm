@@ -44,16 +44,17 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       if (!finding.stepId) return false;
       // Reset the stuck step to pending so it can be reclaimed
       const step = db.prepare(
-        "SELECT abandoned_count FROM steps WHERE id = ?"
+        "SELECT abandoned_count FROM steps WHERE id = ? AND status = 'running'"
       ).get(finding.stepId) as { abandoned_count: number } | undefined;
       if (!step) return false;
 
       const newCount = (step.abandoned_count ?? 0) + 1;
       // Don't auto-reset if already abandoned too many times — let cleanupAbandonedSteps handle final failure
       if (newCount >= 5) {
-        db.prepare(
-          "UPDATE steps SET status = 'failed', output = 'Medic: abandoned too many times', abandoned_count = ?, updated_at = datetime('now') WHERE id = ?"
+        const result = db.prepare(
+          "UPDATE steps SET status = 'failed', output = 'Medic: abandoned too many times', abandoned_count = ?, updated_at = datetime('now') WHERE id = ? AND status = 'running'"
         ).run(newCount, finding.stepId);
+        if (result.changes === 0) return false;
         if (finding.runId) {
           db.prepare(
             "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
@@ -68,9 +69,10 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         return true;
       }
 
-      db.prepare(
-        "UPDATE steps SET status = 'pending', abandoned_count = ?, updated_at = datetime('now') WHERE id = ?"
+      const result = db.prepare(
+        "UPDATE steps SET status = 'pending', abandoned_count = ?, updated_at = datetime('now') WHERE id = ? AND status = 'running'"
       ).run(newCount, finding.stepId);
+      if (result.changes === 0) return false;
       if (finding.runId) {
         emitEvent({
           ts: new Date().toISOString(),

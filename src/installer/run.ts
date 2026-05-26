@@ -148,16 +148,6 @@ export async function runWorkflow(params: {
     throw err;
   }
 
-  // Issue #336 fix: immediately dispatch all parallel pending steps without waiting for cron
-  const pendingSteps = db.prepare(
-    "SELECT agent_id FROM steps WHERE run_id = ? AND status = 'pending'"
-  ).all(runId) as Array<{ agent_id: string }>;
-  if (pendingSteps.length > 0) {
-    const pendingAgentIds = pendingSteps.map(s => s.agent_id);
-    logger.info(`Event-driven dispatch: firing ${pendingSteps.length} parallel steps immediately`);
-    triggerImmediateStepEnqueue(pendingAgentIds, runId);
-  }
-
   // Re-enable any paused crons from a previous terminal run
   try {
     await resumeWorkflowCrons(workflow.id);
@@ -169,11 +159,27 @@ export async function runWorkflow(params: {
   try {
     await ensureWorkflowCrons(workflow);
   } catch (err) {
-    // Roll back the run since it can't advance without crons
+    // Fail the run before any event-driven dispatch can escape.
     const db2 = getDb();
-    db2.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?").run(new Date().toISOString(), runId);
+    const failedAt = new Date().toISOString();
+    db2.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?").run(failedAt, runId);
+    db2.prepare(`
+      UPDATE steps
+      SET status = 'failed', output = 'Cron setup failed before workflow startup dispatch', updated_at = ?
+      WHERE run_id = ? AND status IN ('pending', 'waiting', 'running')
+    `).run(failedAt, runId);
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Cannot start workflow run: cron setup failed. ${message}`);
+  }
+
+  // Issue #336 fix: immediately dispatch all parallel pending steps after cron startup succeeds.
+  const pendingSteps = db.prepare(
+    "SELECT agent_id FROM steps WHERE run_id = ? AND status = 'pending'"
+  ).all(runId) as Array<{ agent_id: string }>;
+  if (pendingSteps.length > 0) {
+    const pendingAgentIds = pendingSteps.map(s => s.agent_id);
+    logger.info(`Event-driven dispatch: firing ${pendingSteps.length} parallel steps immediately`);
+    triggerImmediateStepEnqueue(pendingAgentIds, runId);
   }
 
   emitEvent({ ts: new Date().toISOString(), event: "run.started", runId, workflowId: workflow.id });

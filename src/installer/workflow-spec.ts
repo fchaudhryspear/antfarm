@@ -23,7 +23,7 @@ export async function loadWorkflowSpec(workflowDir: string): Promise<WorkflowSpe
   if (parsed.polling) {
     validatePollingConfig(parsed.polling, workflowDir);
   }
-  validateAgents(parsed.agents, workflowDir);
+  const agentIds = validateAgents(parsed.agents, workflowDir);
   // Parse type/loop from raw YAML before validation
   for (const step of parsed.steps) {
     const rawStep = step as any;
@@ -34,7 +34,7 @@ export async function loadWorkflowSpec(workflowDir: string): Promise<WorkflowSpe
       step.loop = parseLoopConfig(rawStep.loop);
     }
   }
-  validateSteps(parsed.steps, workflowDir);
+  validateSteps(parsed.steps, workflowDir, agentIds);
   assertWorkflowModelsValid(parsed);
   return parsed;
 }
@@ -45,7 +45,7 @@ function validatePollingConfig(polling: PollingConfig, workflowDir: string) {
   }
 }
 
-function validateAgents(agents: WorkflowAgent[], workflowDir: string) {
+function validateAgents(agents: WorkflowAgent[], workflowDir: string): Set<string> {
   const ids = new Set<string>();
   for (const agent of agents) {
     if (!agent.id?.trim()) {
@@ -71,6 +71,7 @@ function validateAgents(agents: WorkflowAgent[], workflowDir: string) {
       throw new Error(`workflow.yml agent "${agent.id}" timeoutSeconds must be positive`);
     }
   }
+  return ids;
 }
 
 function parseLoopConfig(raw: any): LoopConfig {
@@ -83,7 +84,7 @@ function parseLoopConfig(raw: any): LoopConfig {
   };
 }
 
-function validateSteps(steps: WorkflowStep[], workflowDir: string) {
+function validateSteps(steps: WorkflowStep[], workflowDir: string, agentIds: Set<string>) {
   const ids = new Set<string>();
   for (const step of steps) {
     if (!step.id?.trim()) {
@@ -95,6 +96,9 @@ function validateSteps(steps: WorkflowStep[], workflowDir: string) {
     ids.add(step.id);
     if (!step.agent?.trim()) {
       throw new Error(`workflow.yml missing step.agent for step "${step.id}"`);
+    }
+    if (!agentIds.has(step.agent)) {
+      throw new Error(`workflow.yml step "${step.id}" references unknown agent "${step.agent}"`);
     }
     if (!step.input?.trim()) {
       throw new Error(`workflow.yml missing step.input for step "${step.id}"`);

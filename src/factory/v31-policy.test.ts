@@ -41,8 +41,12 @@ describe("v3.1 redaction and model gates", () => {
     assert.match(finance.text, /\[REDACTED_TRANSACTION_ID]/);
     assert.match(finance.text, /\[REDACTED_AMOUNT]/);
 
+    const ungrouped = redactText("paid $1250.00 and $1000", "finance_v1");
+    assert.equal(ungrouped.text, "paid [REDACTED_AMOUNT] and [REDACTED_AMOUNT]");
+
     const def = redactText("paid $1,250.00", "default_v1");
     assert.equal(def.text, "paid $1,250.00");
+    assert.equal(redactText("paid $1250.00 and $1000", "default_v1").text, "paid $1250.00 and $1000");
   });
 
   it("blocks disallowed finance transaction-path models", () => {
@@ -185,6 +189,46 @@ describe("v3.1 audit enforcement and RTBF", () => {
       SELECT rtbf_state, deletion_proof_id FROM factory_subject_registry WHERE tenant_id = ? AND subject_id_hash = ?
     `).get("flobase", subjectHash) as { rtbf_state: string; deletion_proof_id: string | null };
     assert.equal(registry.rtbf_state, "active");
+    assert.equal(registry.deletion_proof_id, null);
+    const auditRows = db.prepare(`
+      SELECT COUNT(*) AS n FROM factory_tenant_audit_log WHERE event_type = 'rtbf_state_transition'
+    `).get() as { n: number };
+    assert.equal(auditRows.n, 0);
+  });
+
+  it("rolls back RTBF state when audit proof insertion fails", () => {
+    const db = memoryDb();
+    const subjectHash = upsertSubjectRegistry({
+      db,
+      tenantId: "flobase",
+      tenantLookupPepper: "tenant-pepper",
+      naturalSubjectId: "person@example.com",
+      envelopeKeyId: "kms://tenant/flobase/subject/opaque",
+    });
+    requestRtbf({ db, id: "rtbf_pii", tenantId: "flobase", subjectIdHash: subjectHash, requestedBy: "faisal" });
+
+    assert.throws(
+      () => transitionRtbf({
+        db,
+        requestId: "rtbf_pii",
+        tenantId: "flobase",
+        subjectIdHash: subjectHash,
+        nextState: "reversible",
+        actor: "faisal",
+        proofSigningSecret: "proof-secret",
+        kmsDeletionEvidence: { email: "person@example.com" },
+      }),
+    );
+
+    const request = db.prepare(`
+      SELECT state, deletion_proof_id FROM factory_rtbf_requests WHERE id = ?
+    `).get("rtbf_pii") as { state: string; deletion_proof_id: string | null };
+    assert.equal(request.state, "requested");
+    assert.equal(request.deletion_proof_id, null);
+    const registry = db.prepare(`
+      SELECT rtbf_state, deletion_proof_id FROM factory_subject_registry WHERE tenant_id = ? AND subject_id_hash = ?
+    `).get("flobase", subjectHash) as { rtbf_state: string; deletion_proof_id: string | null };
+    assert.equal(registry.rtbf_state, "rtbf_requested");
     assert.equal(registry.deletion_proof_id, null);
     const auditRows = db.prepare(`
       SELECT COUNT(*) AS n FROM factory_tenant_audit_log WHERE event_type = 'rtbf_state_transition'

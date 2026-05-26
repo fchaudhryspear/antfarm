@@ -81,7 +81,7 @@ describe("inject-version", () => {
   });
 
   it("updates README and install script URLs without leaking changes", () => {
-    const staleVersion = "0.0.0";
+    const staleVersion = "0.5.1-beta.1";
     const staleUrl = `raw.githubusercontent.com/snarktank/antfarm/v${staleVersion}/`;
     const expectedUrl = `raw.githubusercontent.com/snarktank/antfarm/v${version}/`;
 

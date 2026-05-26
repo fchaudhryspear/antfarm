@@ -13,7 +13,7 @@ const financePatterns: Pattern[] = [
   { name: "routing_number", regex: /\b(?:routing|aba)\s*(?:number|#)?\s*[:=]?\s*\d{9}\b/gi, replacement: "[REDACTED_ROUTING_NUMBER]" },
   { name: "account_number", regex: /\b(?:account|acct)\s*(?:number|#)?\s*[:=]?\s*\d{6,17}\b/gi, replacement: "[REDACTED_ACCOUNT_NUMBER]" },
   { name: "transaction_id", regex: /\b(?:transaction|txn|ach)\s*(?:id|#)?\s*[:=]?\s*[A-Z0-9-]{8,}\b/gi, replacement: "[REDACTED_TRANSACTION_ID]" },
-  { name: "currency_amount", regex: /\$\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\b/g, replacement: "[REDACTED_AMOUNT]" },
+  { name: "currency_amount", regex: /\$\s?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2})?\b/g, replacement: "[REDACTED_AMOUNT]" },
 ];
 
 const piiPatterns: Pattern[] = [
