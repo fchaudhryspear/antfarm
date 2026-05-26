@@ -1,11 +1,11 @@
 # Antfarm v3.1 Artifact Manifest
 
-Generated: 2026-05-25 CDT
+Generated: 2026-05-26 CDT
 
 | File | MD5 | Lines |
 | --- | --- | ---: |
-| `INSTALL.md` | `1fdc72a82e9e88be1d0a3c16b27c84f9` | 150 |
-| `README.md` | `c1a67c0a57d8f72426f56e77c80d1fdc` | 34 |
+| `INSTALL.md` | `42ee1c150412b5e4d18df6443be0ff0d` | 174 |
+| `README.md` | `f6d74723b15a2ef9c32b5686921eb694` | 46 |
 | `RFC-antfarm-v3.1.md` | `6adf05fd0d267ac9ff9d092e47a9f46d` | 1409 |
 | `adp-408-freeze-note-draft-2026-05-25.md` | `43f7511b96b94d163c4fc7810b531b0b` | 46 |
 | `adp-408-freeze-note-final-2026-05-25.md` | `6f0d7fc4b92d54374f5fa8d9686d56a5` | 52 |
