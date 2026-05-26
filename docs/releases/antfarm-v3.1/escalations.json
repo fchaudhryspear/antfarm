@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0.0",
+  "produced_at": "2026-05-25T10:55:00Z",
+  "produced_by": "ross",
+  "target_revision": "v0.15-md5-6adf05fd0d267ac9ff9d092e47a9f46d",
+  "escalations": [
+    {
+      "id": "escalation-001",
+      "source_consolidated_finding": "consolidated-004",
+      "decision_needed_from": "Faisal",
+      "question": "Should restore_antfarm_snapshot remain pre-authorized for Day2 Ops after a 5-hour timeout?",
+      "recommended_decision": "Remove it from Day2 Ops preauthorization, or make it founder-approved break-glass only.",
+      "why_agent_judgment_is_not_enough": "The current permission was a policy choice affecting founder-only security, tenant lifecycle, RTBF, and audit state. Removing or retaining it changes operating authority, not just implementation detail."
+    },
+    {
+      "id": "escalation-002",
+      "source_consolidated_finding": "consolidated-005",
+      "decision_needed_from": "Faisal",
+      "question": "Does dormant runtime activation block RFC freeze/Phase A, or only Phase C execution?",
+      "recommended_decision": "Treat runtime activation as a Phase C operational gate, not an RFC freeze blocker, but keep the dormant-runtime risk explicit and remove checked-off completion wording.",
+      "why_agent_judgment_is_not_enough": "This is a delivery sequencing decision. The RFC currently supports multiple interpretations, and project advancement depends on the owner's chosen risk posture."
+    }
+  ]
+}

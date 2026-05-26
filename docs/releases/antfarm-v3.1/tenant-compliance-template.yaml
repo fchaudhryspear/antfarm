@@ -1,0 +1,28 @@
+# Template only. Runtime source of truth must live in the Antfarm config repo.
+tenant_id: example_tenant
+display_name: Example Tenant
+compliance_class: default # default | finance | pii
+pii_data_location: none # e.g. zoho, factory-sensitive/<tenant_id>, none
+redaction_ruleset: default_v1
+retention:
+  audit_log_years: 1
+  rtbf_reversible_window_days: 30
+approvers:
+  founder:
+    primary: faisal
+  operator:
+    day2_ops: fallback_to_faisal_until_activation
+allowed_action_types:
+  - routine_fixes
+  - audit_log_access
+  - promotion_review
+vault_route:
+  shared: true
+  sensitive_subtree: null
+model_eligibility:
+  default_models_allowed: true
+  finance_transaction_path_restrictions: false
+onboarding:
+  end_to_end_work_item_required: true
+  dashboard_isolation_required: true
+  day2_ops_status_required: true

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { FactoryItem } from "./store.js";
+import { redactText, type RedactionRulesetVersion } from "./redaction.js";
 
 export type ContextPackSource = {
   originalPath: string;
@@ -40,6 +41,8 @@ export type ContextPackManifest = {
   sources: ContextPackSource[];
   prior_artifacts: ContextPackPriorArtifact[];
   pack_checksum: string;
+  redaction_ruleset_version: RedactionRulesetVersion;
+  redactions: string[];
 };
 
 export type GeneratedContextPack = {
@@ -60,6 +63,7 @@ export type GenerateContextPackInput = {
   priorArtifacts?: ContextPackPriorArtifact[];
   constraints?: Record<string, string>;
   outputRoot?: string;
+  redactionRulesetVersion?: RedactionRulesetVersion;
 };
 
 function sha256(value: Buffer | string): string {
@@ -158,17 +162,22 @@ function buildPrompt(params: {
 
 export function generateContextPack(input: GenerateContextPackInput): GeneratedContextPack {
   const sources = resolveSources(input.repoPath, input.sourceFiles);
+  const ruleset = input.redactionRulesetVersion ?? "default_v1";
   const constraints = Object.fromEntries(Object.entries(input.constraints ?? {}).sort(([a], [b]) => a.localeCompare(b)));
   const priorArtifacts = [...(input.priorArtifacts ?? [])].sort((a, b) =>
     `${a.artifact_type}:${a.title}:${a.path_or_url}`.localeCompare(`${b.artifact_type}:${b.title}:${b.path_or_url}`)
   );
+
+  const redactedDescription = redactText(input.factoryItem.description, ruleset);
+  const redactedTask = redactText(input.task, ruleset);
+  const redactions = [...new Set([...redactedDescription.redactions, ...redactedTask.redactions])].sort();
 
   const manifestWithoutChecksum: Omit<ContextPackManifest, "pack_checksum"> = {
     schema_version: "1.0",
     factory_item: {
       id: input.factoryItem.id,
       title: input.factoryItem.title,
-      description: input.factoryItem.description,
+      description: redactedDescription.text,
       repo: input.factoryItem.repo,
       issue_url: input.factoryItem.issue_url,
       priority: input.factoryItem.priority,
@@ -178,11 +187,13 @@ export function generateContextPack(input: GenerateContextPackInput): GeneratedC
     workflow_id: input.workflowId ?? null,
     stage: input.stage,
     agent_role: input.agentRole,
-    task: input.task,
+    task: redactedTask.text,
     repo_path: input.repoPath ? path.resolve(input.repoPath) : null,
     constraints,
     sources,
     prior_artifacts: priorArtifacts,
+    redaction_ruleset_version: ruleset,
+    redactions,
   };
 
   const prompt = buildPrompt({ manifestWithoutChecksum });

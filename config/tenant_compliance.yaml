@@ -1,0 +1,49 @@
+tenants:
+  utility_valet:
+    compliance_class: default
+    redaction_ruleset: default_v1
+    authority:
+      routine_ops: day2_ops
+      finance_sensitive: founder
+      founder_only: founder
+  spearhead:
+    compliance_class: default
+    redaction_ruleset: default_v1
+    authority:
+      routine_ops: day2_ops
+      finance_sensitive: founder
+      founder_only: founder
+  flobase:
+    compliance_class: finance
+    redaction_ruleset: finance_v1
+    authority:
+      routine_ops: day2_ops
+      finance_sensitive: founder
+      founder_only: founder
+  credologi:
+    compliance_class: finance
+    redaction_ruleset: finance_v1
+    authority:
+      routine_ops: day2_ops
+      finance_sensitive: founder
+      founder_only: founder
+  fcrp_capital:
+    compliance_class: default
+    redaction_ruleset: default_v1
+    authority:
+      routine_ops: day2_ops
+      finance_sensitive: founder
+      founder_only: founder
+  starship_residential:
+    compliance_class: default
+    redaction_ruleset: default_v1
+    authority:
+      routine_ops: day2_ops
+      finance_sensitive: founder
+      founder_only: founder
+
+incident_pre_authorizations:
+  - action: incident_response_taken
+    max_duration_minutes: 60
+    authority: day2_ops
+    requires_reversal: true

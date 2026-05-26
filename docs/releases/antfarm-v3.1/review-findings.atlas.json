@@ -1,0 +1,120 @@
+{
+  "reviewer": "atlas",
+  "target": {
+    "rfc": "RFC-antfarm-v3.1.md",
+    "revision": "v0.15",
+    "rfc_md5": "6adf05fd0d267ac9ff9d092e47a9f46d"
+  },
+  "review_scope": [
+    "infrastructure",
+    "schema",
+    "runtime",
+    "runtime activation evidence",
+    "factory_events vs factory_system_events",
+    "migration artifact feasibility"
+  ],
+  "reviewed_artifacts": [
+    {
+      "path": "RFC-antfarm-v3.1.md",
+      "md5": "6adf05fd0d267ac9ff9d092e47a9f46d"
+    },
+    {
+      "path": "antfarm-schema-snapshot-2026-05-24.sql",
+      "md5": "5dac653ec7a187f0faa7605e10835753"
+    },
+    {
+      "path": "antfarm-runtime-evidence-2026-05-24.md",
+      "md5": "c15470411d4272e565fa8962cad4f2a7"
+    },
+    {
+      "path": "migrations/001_v31_expand.sql"
+    },
+    {
+      "path": "migrations/002_v31_backfill.sql"
+    },
+    {
+      "path": "migrations/003_v31_enforce.sql"
+    },
+    {
+      "path": "migrations/004_v31_rollback.sql"
+    },
+    {
+      "path": "validation/v31_validation_queries.sql"
+    },
+    {
+      "path": "validation/event_type_validator_cases.sql"
+    },
+    {
+      "path": "validation/day2_retention_sweep.sql"
+    },
+    {
+      "path": "schema_classification.yaml"
+    },
+    {
+      "path": "event_type_tenant_requirement.yaml"
+    },
+    {
+      "path": "migration_thresholds.yaml"
+    }
+  ],
+  "produced_at": "2026-05-25T05:40:00Z",
+  "summary": "FINDINGS_READY: 4 findings, 3 blocking freeze. The RFC has the right direction, but the executable migration artifacts do not yet enforce the RFC's tenant and audit invariants, and the runtime activation gate is internally inconsistent.",
+  "findings": [
+    {
+      "id": "atlas-001",
+      "severity": "High",
+      "section": "RFC-antfarm-v3.1.md §5.3",
+      "line_reference": "RFC-antfarm-v3.1.md:344-363; RFC-antfarm-v3.1.md:408-435; migrations/001_v31_expand.sql:98-109; migrations/003_v31_enforce.sql:1-4",
+      "exact_problem": "The RFC requires Step 4 to rebuild tenant_scoped tables so tenant_id becomes NOT NULL with FK enforcement, but the supplied enforcement artifact does not rebuild any existing table and does not add equivalent INSERT/UPDATE guards for tenant_scoped rows. A disposable-copy test applying 001/002/003 left factory_runs defined with 'tenant_id TEXT' nullable and no tenant FK.",
+      "operational_impact": "Phase B can appear migrated because NULL counts are zero immediately after backfill, while later writes can still create tenantless or invalid-tenant execution rows. That breaks the core multi-tenant isolation invariant and makes dashboard/API tenant filtering depend on application discipline instead of schema enforcement.",
+      "recommended_fix": "Add executable Step 4 table-rebuild migrations for every tenant_scoped table, preserving columns/indexes/FKs and enforcing tenant_id TEXT NOT NULL REFERENCES factory_tenants(id). Until rebuild is complete, add temporary BEFORE INSERT/UPDATE triggers for each tenant_scoped table that reject NULL or unknown tenant_id. Extend validation to inspect PRAGMA table_info and PRAGMA foreign_key_list, not only row counts.",
+      "blocks_freeze": true
+    },
+    {
+      "id": "atlas-002",
+      "severity": "High",
+      "section": "RFC-antfarm-v3.1.md §5.3 Step 4b / §11",
+      "line_reference": "RFC-antfarm-v3.1.md:364-395; RFC-antfarm-v3.1.md:1171-1182; migrations/001_v31_expand.sql:25-38; migrations/001_v31_expand.sql:78-87; migrations/003_v31_enforce.sql:13-34",
+      "exact_problem": "Step 4b says audit_global tables use event-type-based tenant enforcement, and §11 classifies factory_tenant_audit_log, factory_dashboard_sessions, and factory_system_events as audit_global. The executable trigger only covers factory_system_events inserts. In a disposable-copy test, INSERT into factory_tenant_audit_log with event_type='approval_granted' and tenant_id=NULL succeeded.",
+      "operational_impact": "Approval, RTBF, incident-response, and dashboard audit records can be written without tenant attribution even when the RFC says the event type is tenant-required. This undermines forensic reconstruction, retention policy, and tenant isolation for the exact audit surfaces that need the strongest guarantees.",
+      "recommended_fix": "Either narrow Step 4b's normative scope to factory_system_events only and separately define factory_tenant_audit_log/dashboard enforcement, or implement audit_global enforcement for every audit_global table. At minimum add BEFORE INSERT and BEFORE UPDATE validation for factory_tenant_audit_log event types, define how factory_dashboard_sessions tenant scope maps to the event_type matrix or reclassify it, and add tests that intentionally try tenant_required rows with NULL tenant_id in each audit_global table.",
+      "blocks_freeze": true
+    },
+    {
+      "id": "atlas-003",
+      "severity": "High",
+      "section": "RFC-antfarm-v3.1.md §4 / §12 / §13 / §14",
+      "line_reference": "RFC-antfarm-v3.1.md:161-172; RFC-antfarm-v3.1.md:1225-1235; RFC-antfarm-v3.1.md:1328-1339",
+      "exact_problem": "Runtime activation is simultaneously described as a hard prerequisite for RFC freeze, a Phase C entry gate, and a non-blocking parallel operational track. §4 says all six hard prerequisites must close before v3.1 freezes, including runtime activation. §12 Phase A says close all hard prerequisites but lists only five and says the exit gate is 'all five'. §13 Q11 says v3.1 freezes independently. §14 marks prereq #6 checked while also marking Q11 open.",
+      "operational_impact": "Teams can reasonably disagree on whether a dormant execution runtime blocks freeze, blocks Phase A, or only blocks Phase C. That ambiguity matters because the runtime evidence artifact proves the current execution layer is dormant: factory_* tables are empty, no antfarm.db handles are held by the gateway, no LaunchAgent runtime exists, and no antfarm logs were found. Freezing under contradictory gates risks approving a schema/dashboard plan before the write path that must honor tenant_id exists.",
+      "recommended_fix": "Make one explicit decision and propagate it everywhere. If runtime activation blocks freeze/Phase A, add it to the Phase A bullet list and require ADP-404 evidence before freeze. If runtime activation is only a Phase C operational gate, remove it from §4 hard prerequisites and §14 hard-gate checklist, then state that freeze is allowed with the known dormant-runtime risk accepted. Do not keep both positions.",
+      "blocks_freeze": true
+    },
+    {
+      "id": "atlas-004",
+      "severity": "Medium",
+      "section": "RFC-antfarm-v3.1.md §10.4 / §11",
+      "line_reference": "RFC-antfarm-v3.1.md:1098-1124; RFC-antfarm-v3.1.md:1211-1217; migrations/003_v31_enforce.sql:13-34",
+      "exact_problem": "The RFC requires factory_system_events to be append-only sweep-evidence storage, but the migration artifact only defines a BEFORE INSERT tenant/event-type trigger. It does not prevent UPDATE or DELETE on factory_system_events. In a disposable-copy test, a valid runtime_started row was inserted with tenant_id NULL and then updated to tenant_id='flobase' successfully, bypassing the system_only invariant after insert.",
+      "operational_impact": "Retention sweep summaries/deletion evidence can be changed or removed after the fact unless every caller voluntarily behaves. That weakens the proof that the sweep did not delete its own evidence and creates a tampering gap in the audit trail.",
+      "recommended_fix": "Add BEFORE UPDATE and BEFORE DELETE triggers on factory_system_events that abort by default, or explicitly route all writes through an append-only application API with a SQLite authorizer and test coverage. Add validation cases that UPDATE a system_only event, DELETE a retention_sweep_summary, and attempt to mutate payload_json after insert; all should fail.",
+      "blocks_freeze": false
+    }
+  ],
+  "verification": {
+    "hashes_verified": true,
+    "disposable_migration_test": {
+      "source_db": "/Users/faisalshomemacmini/.openclaw/antfarm/antfarm.db",
+      "scripts_applied": [
+        "migrations/001_v31_expand.sql",
+        "migrations/002_v31_backfill.sql",
+        "migrations/003_v31_enforce.sql"
+      ],
+      "observed": [
+        "factory_runs tenant_id remained nullable after enforcement",
+        "factory_tenant_audit_log accepted approval_granted with NULL tenant_id",
+        "factory_system_events accepted UPDATE changing runtime_started tenant_id from NULL to flobase"
+      ]
+    }
+  }
+}

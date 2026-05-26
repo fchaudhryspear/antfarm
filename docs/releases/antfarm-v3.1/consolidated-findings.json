@@ -1,0 +1,137 @@
+{
+  "schema_version": "1.0.0",
+  "produced_at": "2026-05-25T10:55:00Z",
+  "produced_by": {
+    "kind": "agent",
+    "id": "ross",
+    "display_name": "Ross"
+  },
+  "target": {
+    "kind": "rfc",
+    "ref": "/Users/faisalshomemacmini/.openclaw/antfarm/workflows/antfarm-v3.1/RFC-antfarm-v3.1.md",
+    "revision": "v0.15-md5-6adf05fd0d267ac9ff9d092e47a9f46d"
+  },
+  "inputs": [
+    "review-findings.simon.json",
+    "review-findings.atlas.json",
+    "review-findings.ross.json",
+    "review-findings.leo.json"
+  ],
+  "summary": {
+    "total_reviewer_findings": 15,
+    "consolidated_findings": 9,
+    "freeze_blocking": 6,
+    "needs_owner_decision": 2,
+    "verdict": "Do not freeze v0.15. Produce v0.16 change plan before RFC editing."
+  },
+  "findings": [
+    {
+      "id": "consolidated-001",
+      "source_findings": ["simon-001", "atlas-001"],
+      "severity": "high",
+      "decision": "fix_before_freeze",
+      "owner": "Simon with Atlas review",
+      "section": "5.3 SQLite migration sequencing",
+      "exact_fix": "Add executable Step 4 rebuild migrations or equivalent temporary guards for every tenant_scoped table so tenant_id is NOT NULL and references factory_tenants(id). Extend validation to inspect PRAGMA table_info, PRAGMA foreign_key_list, and PRAGMA foreign_key_check.",
+      "rationale": "The RFC describes strong tenant enforcement, but the current migration packet leaves tenant_id nullable and weakly constrained after 001/002/003.",
+      "blocks_freeze": true,
+      "status": "accepted"
+    },
+    {
+      "id": "consolidated-002",
+      "source_findings": ["simon-002", "atlas-002", "leo-001"],
+      "severity": "high",
+      "decision": "fix_before_freeze",
+      "owner": "Simon with Leo event-contract review",
+      "section": "5.3 Step 4b, 9.1, 10.4, 11",
+      "exact_fix": "Implement event-type tenant enforcement for factory_tenant_audit_log and any other audit_global table, not only factory_system_events. Add dashboard_scope_missing and dashboard_scope_mismatch to the event-type matrix and enforcement allowlist, or change the dashboard spec to use a single allowed event type consistently.",
+      "rationale": "Audit and dashboard evidence can be rejected or accepted with the wrong tenant rules, undermining RTBF, Day2 Ops retention, and dashboard adversarial tests.",
+      "blocks_freeze": true,
+      "status": "accepted"
+    },
+    {
+      "id": "consolidated-003",
+      "source_findings": ["simon-003"],
+      "severity": "high",
+      "decision": "fix_before_freeze",
+      "owner": "Simon and Atlas",
+      "section": "6.3.1 RTBF KMS envelope key destruction",
+      "exact_fix": "Define the exact key model before freeze. Either use client-side per-subject data keys wrapped by a tenant KMS key and signed application deletion proof, or use per-subject KMS keys with states aligned to AWS KMS disabled/pending_deletion/deleted semantics. Update RTBF state names, evidence requirements, and tests accordingly.",
+      "rationale": "The current wording claims KMS destruction semantics that are not precise enough to support RTBF deletion proofs.",
+      "blocks_freeze": true,
+      "status": "accepted"
+    },
+    {
+      "id": "consolidated-004",
+      "source_findings": ["simon-004"],
+      "severity": "high",
+      "decision": "needs_owner_decision",
+      "owner": "Faisal with Simon/Atlas recommendation",
+      "section": "7.4.2 bounded incident response",
+      "exact_fix": "Decide whether restore_antfarm_snapshot remains pre-authorized for Day2 Ops. Recommended default: remove it from post-timeout operator authority or require founder-approved break-glass with immutable pre/post manifests and RTBF/legal-hold preservation checks.",
+      "rationale": "Snapshot restore can undo founder-only schema, security, tenant lifecycle, RTBF, and audit decisions.",
+      "blocks_freeze": true,
+      "status": "accepted"
+    },
+    {
+      "id": "consolidated-005",
+      "source_findings": ["atlas-003", "ross-001"],
+      "severity": "high",
+      "decision": "needs_owner_decision",
+      "owner": "Faisal with Atlas/Ross recommendation",
+      "section": "4, 12, 13, 14 runtime activation gates",
+      "exact_fix": "Choose one runtime-gate policy and propagate it everywhere. Either runtime activation blocks freeze/Phase A, or it is only a Phase C operational gate. Do not keep it simultaneously checked off, open, and non-blocking.",
+      "rationale": "Current text lets teams disagree about whether the dormant runtime blocks freeze, Phase A, or only Phase C.",
+      "blocks_freeze": true,
+      "status": "accepted"
+    },
+    {
+      "id": "consolidated-006",
+      "source_findings": ["ross-002", "leo-002", "leo-003"],
+      "severity": "medium",
+      "decision": "fix_before_freeze",
+      "owner": "Leo with Simon API review",
+      "section": "9.2 and 12.1 dashboard aggregate views",
+      "exact_fix": "Name the v3.1 capability cross-tenant ledger metadata view and reserve federated content search for v3.2+. Define the aggregate route/API shape and whether aggregate mode is read-only or row actions first bind to a concrete tenant context.",
+      "rationale": "The RFC currently mixes deferred federated search with enabled founder ledger aggregation, and leaves aggregate action semantics unclear.",
+      "blocks_freeze": true,
+      "status": "accepted"
+    },
+    {
+      "id": "consolidated-007",
+      "source_findings": ["ross-003"],
+      "severity": "medium",
+      "decision": "fix_before_freeze",
+      "owner": "Ross",
+      "section": "7.3, 9.3, 10, 12 Day2 Ops timing",
+      "exact_fix": "Replace current-body claims that Day2 Ops goes live in 1-2 weeks or is targeted for Phase A/B with planned-but-pending activation language tied to the Section 10.3 activation gate and fallback-to-Faisal behavior.",
+      "rationale": "The summary/Q10 posture is correct, but stale body text still implies schedule certainty.",
+      "blocks_freeze": true,
+      "status": "accepted"
+    },
+    {
+      "id": "consolidated-008",
+      "source_findings": ["atlas-004"],
+      "severity": "medium",
+      "decision": "fix_before_freeze",
+      "owner": "Simon with Atlas review",
+      "section": "10.4 and 11 factory_system_events append-only behavior",
+      "exact_fix": "Add BEFORE UPDATE and BEFORE DELETE protections, or an equivalent enforced append-only writer, for factory_system_events. Add validation cases for UPDATE, DELETE, and payload mutation attempts.",
+      "rationale": "Sweep evidence can currently be mutated after insert in the executable artifact.",
+      "blocks_freeze": false,
+      "status": "accepted"
+    },
+    {
+      "id": "consolidated-009",
+      "source_findings": ["simon-005"],
+      "severity": "medium",
+      "decision": "fix_before_freeze",
+      "owner": "Ross",
+      "section": "6.2 RTBF surface tracking",
+      "exact_fix": "Replace stale table reference rtbf_requests with factory_rtbf_requests where the RFC refers to the table. Keep rtbf_requests only where it is explicitly the action type.",
+      "rationale": "The stale identifier is compliance-critical naming drift.",
+      "blocks_freeze": false,
+      "status": "accepted"
+    }
+  ]
+}

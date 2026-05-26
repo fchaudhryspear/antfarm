@@ -1,0 +1,129 @@
+{
+  "schema_version": "1.0.0",
+  "produced_at": "2026-05-25T00:00:00-05:00",
+  "produced_by": {
+    "kind": "agent",
+    "id": "simon",
+    "display_name": "Simon"
+  },
+  "target": {
+    "kind": "rfc",
+    "ref": "/Users/faisalshomemacmini/.openclaw/antfarm/workflows/antfarm-v3.1/RFC-antfarm-v3.1.md",
+    "revision": "v0.15-md5-6adf05fd0d267ac9ff9d092e47a9f46d"
+  },
+  "review_scope": "Backend/security/compliance review focused on RFC sections 5-7 and 10, SQLite migration, deny-by-default authorization, RTBF/KMS/audit retention, and stale schema identifiers.",
+  "findings": [
+    {
+      "id": "simon-001",
+      "severity": "High",
+      "section": "5.3 SQLite migration sequencing",
+      "line_reference": {
+        "file": "RFC-antfarm-v3.1.md",
+        "line_range": [344, 362],
+        "related_files": [
+          {
+            "file": "migrations/001_v31_expand.sql",
+            "line_range": [98, 109]
+          },
+          {
+            "file": "migrations/003_v31_enforce.sql",
+            "line_range": [1, 4]
+          }
+        ]
+      },
+      "exact_problem": "The RFC correctly requires SQLite table rebuilds to make tenant_scoped tenant_id columns NOT NULL with foreign keys, but the executable migration packet does not implement those rebuilds. 001_v31_expand.sql only adds nullable tenant_id columns, and 003_v31_enforce.sql only adds triggers for event routing / derived mirrors. There is no CREATE TABLE ... tenant_id TEXT NOT NULL REFERENCES factory_tenants(id), data copy, rename, or index recreation for runs, steps, stories, factory_items, factory_runs, factory_agent_runs, factory_context_packs, factory_artifacts, factory_gates, or factory_events.",
+      "operational_impact": "Phase B can appear to pass validation while tenant_scoped tables remain nullable and weakly constrained. Future writes can create tenantless rows or invalid tenant references after the migration, bypassing the deny-by-default isolation model and making cross-tenant leakage possible in dashboard/API queries.",
+      "recommended_fix": "Add concrete per-table rebuild migrations for every tenant_scoped table, including NOT NULL tenant_id, FK to factory_tenants(id), data copy with explicit column lists, index recreation, and post-rebuild PRAGMA foreign_key_check. Extend validation to assert table_info shows tenant_id notnull=1 and foreign_key_list references factory_tenants for each tenant_scoped table.",
+      "blocks_freeze": true
+    },
+    {
+      "id": "simon-002",
+      "severity": "High",
+      "section": "5.3 Step 4b / 10.4 tenant audit enforcement",
+      "line_reference": {
+        "file": "RFC-antfarm-v3.1.md",
+        "line_range": [364, 415],
+        "related_files": [
+          {
+            "file": "RFC-antfarm-v3.1.md",
+            "line_range": [1064, 1124]
+          },
+          {
+            "file": "RFC-antfarm-v3.1.md",
+            "line_range": [1168, 1182]
+          },
+          {
+            "file": "migrations/003_v31_enforce.sql",
+            "line_range": [13, 34]
+          }
+        ]
+      },
+      "exact_problem": "The RFC classifies factory_tenant_audit_log as audit_global and says audit_global enforcement follows the event_type tenant requirement matrix, but the only concrete trigger in 003_v31_enforce.sql applies to factory_system_events. factory_tenant_audit_log can still accept unknown event_type values, fresh legacy_unclassified rows, rtbf / incident rows without tenant_id, and rows that violate the chain-type policy. This is especially serious because §10.4 retention and §6.3 RTBF deletion proofs both depend on factory_tenant_audit_log being trustworthy.",
+      "operational_impact": "The audit log can silently record malformed or tenantless compliance evidence. Retention sweep predicates can miss or delete the wrong rows, RTBF deletion proofs can be written without tenant linkage, and Day2 Ops audit evidence can fail compliance review even if system_events enforcement passes.",
+      "recommended_fix": "Add a factory_tenant_audit_log BEFORE INSERT trigger or mandatory application validator that enforces the same deny-by-default event_type matrix for tenant audit rows. Include tests for tenant_required rtbf_state_transition, incident_response_taken, incident_response_reversed, approval_* rows; unknown event types; fresh legacy_unclassified; and required event_chain_type for RTBF / incident rows. Keep factory_system_events system-only enforcement separate.",
+      "blocks_freeze": true
+    },
+    {
+      "id": "simon-003",
+      "severity": "High",
+      "section": "6.3.1 RTBF KMS envelope key destruction",
+      "line_reference": {
+        "file": "RFC-antfarm-v3.1.md",
+        "line_range": [535, 570],
+        "related_files": [
+          {
+            "file": "rtbf-kms-audit-packet.md",
+            "line_range": [7, 25]
+          },
+          {
+            "file": "rtbf-kms-audit-packet.md",
+            "line_range": [38, 57]
+          }
+        ]
+      },
+      "exact_problem": "The RFC and RTBF packet say subject envelope keys live in KMS and are destroyed during the rtbf_requested -> rtbf_reversible transition, with KMS deletion confirmation used as deletion proof. That is not a precise AWS KMS implementation model. AWS KMS customer-managed keys are scheduled for deletion with a 7-30 day waiting period, not immediately destroyed. If the design instead means locally generated data keys encrypted by KMS, KMS does not store that plaintext data key and cannot produce the claimed per-subject key-destruction confirmation. The current wording lets implementation claim crypto-erasure before the actual key material destruction semantics are defined.",
+      "operational_impact": "RTBF finalization can be falsely certified. A finance tenant could receive a deletion proof while key material is only disabled / pending deletion, or while recovery material still exists outside a defined control boundary. That breaks the audit story for right-to-be-forgotten and makes rollback/legal-hold behavior ambiguous.",
+      "recommended_fix": "Define the exact key model before freeze: either (A) per-subject data encryption keys generated client-side, wrapped by a tenant KMS CMK, with local plaintext/wrapped DEK destruction and signed application proof; or (B) per-subject AWS KMS keys, with states renamed to disabled/pending_deletion/deleted and reversible windows aligned to AWS KMS pending-window limits. Add CloudTrail/KMS evidence requirements and tests for the chosen model. Do not use 'destroyed in KMS' until the deletion semantics match the provider.",
+      "blocks_freeze": true,
+      "evidence": [
+        "AWS KMS ScheduleKeyDeletion has a valid pending-window range with minimum 7 days; KMS keys are not immediately deleted."
+      ]
+    },
+    {
+      "id": "simon-004",
+      "severity": "High",
+      "section": "7.4.2 bounded incident response",
+      "line_reference": {
+        "file": "RFC-antfarm-v3.1.md",
+        "line_range": [785, 828]
+      },
+      "exact_problem": "restore_antfarm_snapshot is pre-authorized for Day2 Ops after a 5-hour Faisal timeout with scope any_tenant and evidence as corruption_evidence or operator_judgment. Restoring the Antfarm SQLite snapshot is not a routine operator recovery action; it can roll back schema migrations, access-control changes, RTBF state transitions, tenant_compliance sync state, audit rows, and cross-tenant ledger state. This conflicts with the same section's founder-only exclusions for schema changes, security changes, tenant lifecycle changes, and finance RTBF processing.",
+      "operational_impact": "An operator-class incident response could undo founder-only compliance/security decisions or resurrect deleted/forgotten subject state without founder approval. It also creates an audit-retention failure mode: the restore can remove the very incident/audit rows needed to justify the restore unless the snapshot protocol is strongly constrained.",
+      "recommended_fix": "Remove restore_antfarm_snapshot from Day2 Ops pre-authorized actions, or narrow it to founder-approved break-glass only. If it must remain, require immutable pre/post snapshot manifests, offline backup selection by founder, no schema-version downgrade, explicit RTBF/legal-hold preservation checks, audit-log externalization before restore, and post-restore tenant isolation validation before traffic resumes.",
+      "blocks_freeze": true
+    },
+    {
+      "id": "simon-005",
+      "severity": "Medium",
+      "section": "6.2 RTBF surface tracking",
+      "line_reference": {
+        "file": "RFC-antfarm-v3.1.md",
+        "line_range": [477, 477],
+        "related_files": [
+          {
+            "file": "RFC-antfarm-v3.1.md",
+            "line_range": [1175, 1176]
+          },
+          {
+            "file": "migrations/001_v31_expand.sql",
+            "line_range": [50, 60]
+          }
+        ]
+      },
+      "exact_problem": "The RTBF section still says the `rtbf_requests` table tracks processed surfaces, but the finalized v3.1 table inventory and migration artifact define `factory_rtbf_requests`. `rtbf_requests` is also an action type in §7.4, so the stale table identifier is easy to miss in review and easy to mis-implement.",
+      "operational_impact": "Implementation can create or query a non-canonical RTBF table, split deletion state between names, or fail runtime checks because code follows the older prose while migrations created the prefixed table. This is a low-level naming drift in a compliance-critical workflow.",
+      "recommended_fix": "Replace the §6.2 table reference with `factory_rtbf_requests` and add a naming consistency check that rejects unprefixed v3.1 table names in normative prose, except where the term is explicitly an action type such as `rtbf_requests`.",
+      "blocks_freeze": false
+    }
+  ]
+}

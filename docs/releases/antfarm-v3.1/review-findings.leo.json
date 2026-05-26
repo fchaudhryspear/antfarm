@@ -1,0 +1,47 @@
+{
+  "reviewer": "leo",
+  "assignment": "ADP-406",
+  "target": {
+    "rfc": "RFC-antfarm-v3.1.md",
+    "revision": "v0.15",
+    "rfc_md5": "6adf05fd0d267ac9ff9d092e47a9f46d",
+    "schema_artifact": "antfarm-schema-snapshot-2026-05-24.sql",
+    "schema_artifact_md5": "5dac653ec7a187f0faa7605e10835753",
+    "runtime_evidence": "antfarm-runtime-evidence-2026-05-24.md",
+    "runtime_evidence_md5": "c15470411d4272e565fa8962cad4f2a7"
+  },
+  "produced_at": "2026-05-25T10:29:32Z",
+  "summary": "Dashboard/operator UX review found one freeze-blocking audit event consistency issue and two non-blocking implementation clarifications.",
+  "findings": [
+    {
+      "id": "leo-001",
+      "severity": "Medium",
+      "section": "§9.1 Tenant isolation at the API layer / companion dashboard isolation spec",
+      "line_reference": "RFC-antfarm-v3.1.md:978-986; dashboard-operator-isolation-spec.md:26,46,48; event_type_tenant_requirement.yaml:12-14; migrations/003_v31_enforce.sql:25-32",
+      "exact_problem": "The dashboard isolation contract requires audit events for missing scope and URL/body tenant mismatch using event types `dashboard_scope_missing` and `dashboard_scope_mismatch`, but the v3.1 event-type policy and enforcement trigger only allow `dashboard_scope_denied` for dashboard scope failures. Under the deny-by-default event-type rule, the mandatory 400 and mismatch tests cannot both return the required response and emit their required audit events.",
+      "operational_impact": "The Phase B dashboard isolation test suite can fail even if HTTP response behavior is correct, because the audit write is rejected as an unknown event type. Operators would either lose audit evidence for two adversarial cases or have to collapse distinct failure modes into `dashboard_scope_denied`, making incident review less precise.",
+      "recommended_fix": "Add `dashboard_scope_missing` and `dashboard_scope_mismatch` to `event_type_tenant_requirement.yaml` as `tenant_optional`; add both event types to the `factory_system_events_tenant_check` allowlist in `migrations/003_v31_enforce.sql`; explicitly mention in §9.1 that these are the required event types for missing-scope and mismatch tests.",
+      "blocks_freeze": true
+    },
+    {
+      "id": "leo-002",
+      "severity": "Low",
+      "section": "§9.2 Required tenant filter behavior",
+      "line_reference": "RFC-antfarm-v3.1.md:992-996",
+      "exact_problem": "The RFC requires a default 'all authorized tenants' landing page and an explicit 'show all' toggle, but also says every view URL includes `/t/<tenant_id>/...`. The aggregate view has no single tenant_id, so implementers are left to invent a sentinel route such as `/t/all`, a tenant list query route, or a separate aggregate route.",
+      "operational_impact": "Without a canonical route and API shape, frontend, API, and tests may disagree about whether aggregate views are tenant-scoped reads, multi-tenant reads with `tenants: [...]`, or a special case. That increases the chance of either accidental no-scope reads or brittle URL handling around the tenant selector.",
+      "recommended_fix": "Define the aggregate route explicitly, for example `/t/_authorized/...`, and require it to call the API with an explicit `tenants: authorized_tenant_ids` list derived server-side from the token. State that `/t/<tenant_id>/...` applies to single-tenant views, while aggregate views use the reserved aggregate route and are still tenant-scoped by explicit tenant list.",
+      "blocks_freeze": false
+    },
+    {
+      "id": "leo-003",
+      "severity": "Low",
+      "section": "§9.2 Required tenant filter behavior",
+      "line_reference": "RFC-antfarm-v3.1.md:993-997",
+      "exact_problem": "The RFC allows cross-tenant aggregate views but says approve/retry/pause actions can only target work in the currently selected tenant. It does not say whether operator actions are disabled in 'all authorized tenants' mode, or whether row-level actions in the aggregate view bind to the row's tenant and transition into that tenant context before command submission.",
+      "operational_impact": "Day2 Ops and founder operators may see cross-tenant queues but get inconsistent affordances for action buttons. If the UI permits actions from the aggregate view without an explicit tenant-context transition, operators can make mistakes and tests have no clear expected behavior.",
+      "recommended_fix": "Make aggregate views read-only by default, or require every aggregate row action to first bind to that row's tenant, update the route to `/t/<tenant_id>/...`, and submit `target_tenant_id` from the row with a visible tenant label in the confirmation. Add this as a §9.2 UI rule and include one test for attempting an action while no single tenant is selected.",
+      "blocks_freeze": false
+    }
+  ]
+}

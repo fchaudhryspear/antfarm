@@ -128,6 +128,13 @@ steps:
 
 Full guide: [docs/creating-workflows.md](docs/creating-workflows.md)
 
+## Software Factory v3.1
+
+The Antfarm v3.1 Multi-Tenant Software Factory release pack is checked in at
+[docs/releases/antfarm-v3.1](docs/releases/antfarm-v3.1). Start with
+[INSTALL.md](docs/releases/antfarm-v3.1/INSTALL.md) when setting up v3.1 on a
+fresh OpenClaw/Hermes host.
+
 ---
 
 ## Security

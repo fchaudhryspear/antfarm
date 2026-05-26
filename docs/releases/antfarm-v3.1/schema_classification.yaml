@@ -1,0 +1,125 @@
+# Antfarm v3.1 schema classification packet.
+# Source evidence:
+# - RFC-antfarm-v3.1.md v0.15 sections 5.1.1, 5.2, 5.3, 11
+# - antfarm-schema-snapshot-2026-05-24.sql MD5 5dac653ec7a187f0faa7605e10835753
+version: antfarm-v3.1
+generated_at: "2026-05-25"
+schema_snapshot:
+  path: antfarm-schema-snapshot-2026-05-24.sql
+  md5: 5dac653ec7a187f0faa7605e10835753
+  live_db_path: /Users/faisalshomemacmini/.openclaw/antfarm/antfarm.db
+
+classes:
+  tenant_scoped:
+    meaning: Rows belong to one tenant and require tenant_id after migration tightening.
+    migration_rule: expand_backfill_enforce_tighten
+  global_config:
+    meaning: Cross-tenant configuration; no tenant_id enforcement, founder/security governed.
+    migration_rule: no_tenant_id
+  derived_mirror:
+    meaning: Runtime mirror of source-of-truth config; direct application writes forbidden.
+    migration_rule: sync_owned_only
+  audit_global:
+    meaning: Audit/system ledger; tenant_id nullable and enforced by event_type requirement matrix.
+    migration_rule: event_type_validator
+
+existing_tables:
+  runs:
+    class: tenant_scoped
+    source: v2_historical
+    tenant_backfill: v3_0_legacy
+    rationale: Workflow run records are tenant-attributable once work items are onboarded.
+  steps:
+    class: tenant_scoped
+    source: v2_historical
+    tenant_backfill: v3_0_legacy
+    rationale: Step execution inherits tenant from run/work item lineage.
+  stories:
+    class: tenant_scoped
+    source: v2_historical
+    tenant_backfill: v3_0_legacy
+    rationale: Story rows are work-unit content and must not be cross-tenant by default.
+  medic_checks:
+    class: audit_global
+    source: v2_historical
+    event_type_source: synthetic_medic_check
+    rationale: Runtime health checks can be system-level or tenant-attributable by event type.
+  agent_stats:
+    class: global_config
+    source: v2_historical
+    rationale: Agent aggregate counters are runtime configuration/telemetry, not tenant rows.
+  session_heartbeats:
+    class: audit_global
+    source: v2_historical
+    event_type_source: synthetic_session_heartbeat
+    rationale: Liveness telemetry is system-level unless a future event type marks tenant scope.
+  cron_idle_ticks:
+    class: global_config
+    source: v2_historical
+    rationale: Cron agent idle state is runtime metadata with no tenant identity.
+  factory_items:
+    class: tenant_scoped
+    source: v3_0_landed
+    tenant_backfill: v3_0_legacy
+    rationale: Work intake is tenant-owned after v3.1.
+  factory_runs:
+    class: tenant_scoped
+    source: v3_0_landed
+    tenant_backfill: derive_from_factory_item
+    rationale: Run rows belong to the tenant of their factory item.
+  factory_agent_runs:
+    class: tenant_scoped
+    source: v3_0_landed
+    tenant_backfill: derive_from_factory_run
+    rationale: Agent run rows inherit tenant through factory_run.
+  factory_context_packs:
+    class: tenant_scoped
+    source: v3_0_landed
+    tenant_backfill: derive_from_factory_item
+    rationale: Context packs are tenant-scoped and carry eligible vaults.
+  factory_artifacts:
+    class: tenant_scoped
+    source: v3_0_landed
+    tenant_backfill: derive_from_factory_item
+    rationale: Artifacts can contain tenant-sensitive output and must be scoped.
+  factory_gates:
+    class: tenant_scoped
+    source: v3_0_landed
+    tenant_backfill: derive_from_factory_item
+    rationale: Gate decisions attach to a tenant-owned work item or run.
+  factory_events:
+    class: tenant_scoped
+    source: v3_0_landed
+    tenant_backfill: derive_from_factory_item
+    hard_rule: never_route_system_events_here
+    rationale: Verified schema has factory_item_id TEXT NOT NULL, so it is not audit_global.
+
+net_new_v3_1_tables:
+  factory_tenants:
+    class: global_config
+    purpose: Tenant registry; immutable compliance_class except audited lifecycle changes.
+  factory_tenant_compliance:
+    class: derived_mirror
+    purpose: Startup mirror of tenant_compliance.yaml.
+  factory_tenant_audit_log:
+    class: audit_global
+    purpose: Compliance-class elevated audit separate from factory_events.
+  factory_vault_routes:
+    class: derived_mirror
+    purpose: Runtime projection of vault eligibility.
+  factory_rtbf_requests:
+    class: tenant_scoped
+    purpose: Right-to-be-forgotten workflow tracking.
+  factory_subject_registry:
+    class: tenant_scoped
+    purpose: Keyed-hash subject registry with opaque KMS key references.
+  factory_dashboard_sessions:
+    class: audit_global
+    purpose: Dashboard auth/session audit with tenant scope claims.
+  factory_system_events:
+    class: audit_global
+    purpose: Runtime/system event log for parentless events.
+    canonical_system_event_home: true
+
+event_type_policy_file: event_type_tenant_requirement.yaml
+legacy_unclassified_threshold_percent: 5
