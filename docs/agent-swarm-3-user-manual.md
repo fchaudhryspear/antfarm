@@ -3,6 +3,8 @@
 Last updated: 2026-05-25
 Audience: operators, tenant onboarding owners, factory reviewers, and OpenClaw/Hermes installers
 
+This is internal operational documentation. It is not legal, compliance, financial, or customer-facing advice, and it does not certify that any tenant or deployment satisfies a regulatory framework. Operators must use the referenced runbooks, approvals, evidence packets, and counsel/compliance review where required before relying on these controls for customer, regulatory, or external commitments.
+
 This manual explains how to set up and operate Agent Swarm 3, the Antfarm v3/v3.1 multi-agent factory model. It is written for a fresh OpenClaw/Hermes/Antfarm installation where another operator needs enough context to bring up a working factory and understand the remaining v3.1 gates.
 
 ## Scope
@@ -14,7 +16,7 @@ Agent Swarm 3 is the multi-tenant software factory operating model for Antfarm. 
 - Hermes operator control-plane workflows.
 - Tenant configuration.
 - Factory ledger tables.
-- Audit, compliance, redaction, and vault-routing controls.
+- Audit logging, internal tenant classification, redaction, and vault-routing controls.
 - Day 2 Ops approval and incident interfaces.
 
 The GitHub release bundle lives in the Antfarm repository at:
@@ -41,7 +43,7 @@ The v3.1 design and evidence packet is frozen for review. It is not just an RFC 
 - Tenant configuration files.
 - Two-vault Obsidian routing.
 - Day 2 Ops interface and activation gate.
-- Compliance redaction rulesets.
+- Tenant-configured redaction rulesets.
 - RTBF, KMS, and audit hashing behavior.
 - Dashboard/operator isolation behavior.
 - Runtime activation runbook.
@@ -244,7 +246,7 @@ Each tenant needs:
 
 - `tenant_id`
 - display name
-- compliance class
+- internal compliance class
 - vault route
 - model eligibility
 - dashboard visibility expectations
@@ -333,7 +335,7 @@ Operator rule:
 
 ## Compliance and Redaction
 
-Each tenant maps to a compliance class and redaction ruleset.
+Each tenant maps to an internal compliance class and redaction ruleset.
 
 Expected v3.1 rulesets:
 
@@ -440,7 +442,7 @@ RTBF validation fails:
 
 ## Operator Boundaries
 
-- Do not onboard a real tenant with sensitive data until tenant config, compliance class, vault route, dashboard isolation, and Day 2 Ops fallback are all documented.
+- Do not onboard a real tenant with sensitive data until tenant config, internal compliance class, vault route, dashboard isolation, and Day 2 Ops fallback are all documented.
 - Do not bypass `security_changes` for founder-class settings.
 - Do not treat Linear comments as the source of truth; they are operator UX.
 - Do not run destructive database migrations without backup and rollback evidence.
@@ -456,7 +458,7 @@ Agent Swarm 3 is ready for a new OpenClaw/Hermes host when:
 - Bundled workflows install successfully.
 - A workflow run advances through gateway cron pickup.
 - v3.1 migrations validate against the target database.
-- Tenant config and compliance config are present.
+- Tenant config and tenant compliance configuration are present.
 - Vault routing is verified.
 - Dashboard isolation tests pass.
 - Day 2 Ops approval fallback or live identity is recorded.
