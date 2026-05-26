@@ -101,6 +101,44 @@ describe("logger", () => {
       assert.match(combinedLogs, /\[INFO\] concurrent one/);
       assert.match(combinedLogs, /\[INFO\] concurrent two/);
     });
+
+    it("replaces an unchanged stale lock and releases only its own lock", () => {
+      const lockFile = path.join(tempLogDir, "workflow.log.lock");
+      const staleTime = new Date(Date.now() - 60_000);
+
+      fs.writeFileSync(lockFile, "stale-owner", "utf-8");
+      fs.utimesSync(lockFile, staleTime, staleTime);
+
+      log("info", "after stale lock");
+
+      assert.equal(fs.existsSync(lockFile), false);
+      assert.match(
+        fs.readFileSync(path.join(tempLogDir, "workflow.log"), "utf-8"),
+        /\[INFO\] after stale lock/
+      );
+    });
+
+    it("does not remove a stale-looking lock owned by a live process", async () => {
+      const lockFile = path.join(tempLogDir, "workflow.log.lock");
+      const staleTime = new Date(Date.now() - 60_000);
+      const liveOwnerToken = `${process.pid}:live-owner`;
+      const loggerUrl = new URL("./logger.js", import.meta.url).href;
+
+      fs.writeFileSync(lockFile, liveOwnerToken, "utf-8");
+      fs.utimesSync(lockFile, staleTime, staleTime);
+
+      try {
+        await execFileAsync(process.execPath, [
+          "-e",
+          `import(${JSON.stringify(loggerUrl)}).then(({ log }) => log("info", "blocked by live owner"))`,
+        ], { env: { ...process.env, ANTFARM_LOG_DIR: tempLogDir }, timeout: 200 });
+        assert.fail("logger process should wait on a live owner's lock");
+      } catch (error) {
+        assert.equal((error as { killed?: boolean }).killed, true);
+      }
+
+      assert.equal(fs.readFileSync(lockFile, "utf-8"), liveOwnerToken);
+    });
   });
 
   describe("formatEntry()", () => {

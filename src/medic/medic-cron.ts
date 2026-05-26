@@ -10,13 +10,12 @@ const MEDIC_EVERY_MS = 5 * 60 * 1000; // 5 minutes
 const MEDIC_MODEL = "default";
 const MEDIC_TIMEOUT_SECONDS = 120;
 
-function buildMedicPrompt(): string {
-  const cli = resolveAntfarmCli();
+export function buildMedicPrompt(cli = resolveAntfarmCli()): string {
   return `You are the Antfarm Medic — a health watchdog for workflow runs.
 
 Run the medic check:
 \`\`\`
-node ${cli} medic run --json
+node ${JSON.stringify(cli)} medic run --json
 \`\`\`
 
 If the check output contains "issuesFound": 0, reply HEARTBEAT_OK and stop.

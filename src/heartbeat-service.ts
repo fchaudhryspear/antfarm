@@ -8,6 +8,7 @@
  */
 import { getDb } from "./db.js";
 import { touchStepActivity } from "./installer/step-ops.js";
+import type { DatabaseSync } from "node:sqlite";
 
 // ── DB Migration ────────────────────────────────────────────────────
 
@@ -36,24 +37,30 @@ export function ping(sessionId: string, stepId?: string, runId?: string): void {
   const db = getDb();
   const now = new Date().toISOString();
 
-  const existing = db.prepare(
-    "SELECT session_id FROM session_heartbeats WHERE session_id = ?"
-  ).get(sessionId) as { session_id: string } | undefined;
-
-  if (existing) {
-    db.prepare(
-      "UPDATE session_heartbeats SET last_ping_at = ?, status = 'alive', step_id = COALESCE(?, step_id), run_id = COALESCE(?, run_id) WHERE session_id = ?"
-    ).run(now, stepId ?? null, runId ?? null, sessionId);
-  } else {
-    db.prepare(
-      "INSERT INTO session_heartbeats (session_id, step_id, run_id, last_ping_at, status, created_at) VALUES (?, ?, ?, ?, 'alive', ?)"
-    ).run(sessionId, stepId ?? null, runId ?? null, now, now);
-  }
+  recordHeartbeatPing(db, sessionId, stepId, runId, now);
 
   // Issue #342: Update step activity timestamp for stale session detection
   if (stepId) {
     try { touchStepActivity(stepId); } catch { /* best-effort */ }
   }
+}
+
+export function recordHeartbeatPing(
+  db: DatabaseSync,
+  sessionId: string,
+  stepId?: string,
+  runId?: string,
+  now: string = new Date().toISOString(),
+): void {
+  db.prepare(`
+    INSERT INTO session_heartbeats (session_id, step_id, run_id, last_ping_at, status, created_at)
+    VALUES (?, ?, ?, ?, 'alive', ?)
+    ON CONFLICT(session_id) DO UPDATE SET
+      last_ping_at = excluded.last_ping_at,
+      status = 'alive',
+      step_id = COALESCE(excluded.step_id, session_heartbeats.step_id),
+      run_id = COALESCE(excluded.run_id, session_heartbeats.run_id)
+  `).run(sessionId, stepId ?? null, runId ?? null, now, now);
 }
 
 export interface StaleSession {

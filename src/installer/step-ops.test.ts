@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { getDb } from "../db.js";
-import { buildForcedTierOutput, claimStep, getStepStatus, normalizeForcedTier, parseOutputKeyValues } from "./step-ops.js";
+import { buildForcedTierOutput, claimStep, cleanupAbandonedSteps, getStepStatus, normalizeForcedTier, parseOutputKeyValues } from "./step-ops.js";
 import { validateContractAndDispatch } from "../validate-step-output.js";
 
 const cleanupRunIds: string[] = [];
@@ -89,6 +89,29 @@ describe("getStepStatus", () => {
     ).run(stepId, runId, agentId);
 
     assert.equal(getStepStatus(agentId), "running");
+
+    const row = db.prepare("SELECT status FROM steps WHERE id = ?").get(stepId) as { status: string };
+    assert.equal(row.status, "running");
+  });
+});
+
+describe("cleanupAbandonedSteps", () => {
+  it("ignores invalid persisted timeout overrides", () => {
+    const db = getDb();
+    const runId = crypto.randomUUID();
+    const stepId = crypto.randomUUID();
+    const agentId = `test-agent-${crypto.randomUUID()}`;
+    cleanupRunIds.push(runId);
+
+    insertRun(runId);
+    db.prepare(
+      `INSERT INTO steps (
+        id, run_id, step_id, agent_id, step_index, input_template, expects, status,
+        timeout_minutes, created_at, updated_at
+      ) VALUES (?, ?, 'invalid-timeout', ?, 0, 'Do work', '', 'running', -1, datetime('now', '-4 minutes'), datetime('now', '-4 minutes'))`
+    ).run(stepId, runId, agentId);
+
+    cleanupAbandonedSteps();
 
     const row = db.prepare("SELECT status FROM steps WHERE id = ?").get(stepId) as { status: string };
     assert.equal(row.status, "running");

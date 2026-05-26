@@ -8,13 +8,11 @@
  * Usage: antfarm cron-recovery [--dry-run]
  */
 
-import { execSync } from 'node:child_process';
-import path from 'node:path';
-import os from 'node:os';
 import { ensureWorkflowCrons } from '../installer/agent-cron.js';
 import { loadWorkflowSpec } from '../installer/workflow-spec.js';
 import { resolveWorkflowDir } from '../installer/paths.js';
 import { listCronJobs } from '../installer/gateway-api.js';
+import { getDb } from '../db.js';
 
 interface ActiveRun {
   id: string;
@@ -25,17 +23,13 @@ interface ActiveRun {
 }
 
 function getActiveRuns(): ActiveRun[] {
-  const dbPath = path.join(os.homedir(), '.openclaw', 'antfarm', 'antfarm.db');
-  const output = execSync(`sqlite3 "${dbPath}" "SELECT id, workflow_id, status, task, updated_at FROM runs WHERE status = 'running' ORDER BY updated_at DESC;"`, {
-    encoding: 'utf-8'
-  });
-  
-  if (!output.trim()) return [];
-  
-  return output.trim().split('\n').map(line => {
-    const [id, workflow_id, status, task, updated_at] = line.split('|');
-    return { id, workflow_id, status, task, updated_at };
-  });
+  const db = getDb();
+  return db.prepare(`
+    SELECT id, workflow_id, status, task, updated_at
+    FROM runs
+    WHERE status = 'running'
+    ORDER BY updated_at DESC
+  `).all() as unknown as ActiveRun[];
 }
 
 export async function recoverCrons(dryRun = false): Promise<{

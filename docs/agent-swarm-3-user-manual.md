@@ -111,7 +111,7 @@ Verify Node before installing Antfarm:
 node --version
 ```
 
-Antfarm requires real Node.js 22+. Bun's node wrapper can fail on `node:sqlite`.
+Antfarm requires real Node.js 22.13.0+. Bun's node wrapper can fail on `node:sqlite`.
 
 ## Build Antfarm
 

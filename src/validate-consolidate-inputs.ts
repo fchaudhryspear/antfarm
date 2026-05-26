@@ -45,14 +45,16 @@ export function checkAllStepsPresent(
     : null;
 
   for (const s of allSteps) {
-    const hasOutput = s.output && s.output.trim().length > 0;
-    if (hasOutput) continue;
-
     // Derive domain from step_id (strip fix-/review-/scan- prefix)
     const domain = s.step_id.replace(/^(fix-|review-|scan-)/, "").toLowerCase();
 
     // If specific domains requested, skip those not in the list
     if (domainsToCheck && !domainsToCheck.has(domain)) continue;
+
+    const status = s.status.toLowerCase();
+    const hasCompletedOutput = status === "completed" && s.output && s.output.trim().length > 0;
+    if (hasCompletedOutput) continue;
+    if (status === "skipped" && NON_CRITICAL_DOMAINS.has(domain)) continue;
 
     if (CRITICAL_DOMAINS.has(domain)) {
       criticalMissing.push(domain);

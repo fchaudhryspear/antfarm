@@ -58,4 +58,34 @@ describe("loadWorkflowSpec", () => {
       /workflow\.yml step "implement" references unknown agent "missing-agent"/,
     );
   });
+
+  it("rejects non-positive step timeout overrides", async () => {
+    const workflowDir = await makeTempDir();
+    await writeMinimalModelRegistry(workflowDir);
+    await fs.writeFile(
+      path.join(workflowDir, "workflow.yml"),
+      [
+        "id: test-workflow",
+        "agents:",
+        "  - id: developer",
+        "    workspace:",
+        "      baseDir: developer",
+        "      files:",
+        "        AGENTS.md: AGENTS.md",
+        "steps:",
+        "  - id: implement",
+        "    agent: developer",
+        "    input: Fix it",
+        "    expects: STATUS",
+        "    timeout_minutes: -1",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    await assert.rejects(
+      loadWorkflowSpec(workflowDir),
+      /workflow\.yml step "implement" timeout_minutes must be positive/,
+    );
+  });
 });

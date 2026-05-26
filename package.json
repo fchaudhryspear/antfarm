@@ -4,16 +4,17 @@
   "version": "0.5.1",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "bin": {
     "antfarm": "dist/cli/cli.js"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "build": "npm run typecheck && cp package.json dist/package.json && cp src/server/index.html dist/server/index.html && chmod +x dist/cli/cli.js && node scripts/inject-version.js",
-    "test": "npm run build && node --test \"dist/**/*.test.js\" scripts/__tests__/inject-version.test.js",
-    "start": "node dist/cli/cli.js"
+    "build": "rm -rf dist && npm run typecheck && cp package.json dist/package.json && cp src/server/index.html dist/server/index.html && chmod +x dist/cli/cli.js",
+    "release:inject-version": "node scripts/inject-version.js",
+    "test": "npm run build && node --test \"dist/**/*.test.js\" scripts/__tests__/inject-version.test.js scripts/__tests__/package-manifest.test.js",
+    "start": "npm run build && node dist/cli/cli.js"
   },
   "dependencies": {
     "json5": "^2.2.3",

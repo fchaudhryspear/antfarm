@@ -82,4 +82,37 @@ describe("context pack generator", () => {
     }, db);
     assert.equal(agentRun.context_pack_id, contextPack.id);
   });
+
+  it("redacts prior artifact metadata from agent-facing pack files", () => {
+    const root = tempDir();
+    const outputRoot = path.join(root, "packs");
+    const db = memoryDb();
+    const item = createFactoryItem({ id: "fi_redact_artifact", title: "Redact artifact metadata" }, db);
+
+    const pack = generateContextPack({
+      factoryItem: item,
+      stage: "requirements",
+      agentRole: "product-strategist",
+      task: "Define the feature",
+      priorArtifacts: [{
+        artifact_type: "summary",
+        title: "person@example.com",
+        path_or_url: "https://example.test/a?token=artifactsecret",
+      }],
+      outputRoot,
+      redactionRulesetVersion: "pii_v1",
+    });
+
+    const manifest = fs.readFileSync(path.join(pack.path, "manifest.json"), "utf-8");
+    const prompt = fs.readFileSync(path.join(pack.path, "prompt.md"), "utf-8");
+    const priorArtifactManifest = fs.readFileSync(path.join(pack.path, "prior-artifacts", "manifest.json"), "utf-8");
+
+    assert.equal(pack.manifest.prior_artifacts[0].title, "[REDACTED_EMAIL]");
+    assert.match(pack.manifest.prior_artifacts[0].path_or_url, /\[REDACTED_SECRET]/);
+    assert.deepEqual(pack.manifest.redactions, ["email", "secret"]);
+    for (const content of [manifest, prompt, priorArtifactManifest]) {
+      assert.doesNotMatch(content, /person@example\.com/);
+      assert.doesNotMatch(content, /artifactsecret/);
+    }
+  });
 });

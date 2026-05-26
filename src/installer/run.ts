@@ -49,6 +49,20 @@ function validateDependencyGraph(steps: Array<{ id: string; depends_on?: string 
   }
 }
 
+export function getEmptyRequiredContextVars(
+  workflowContext: Record<string, string> | undefined,
+  initialContext: Record<string, string>,
+): string[] {
+  const requiredVars = Object.entries(workflowContext ?? {})
+    .filter(([, value]) => value.trim() === "")
+    .map(([key]) => key);
+
+  return requiredVars.filter(v => {
+    const val = initialContext[v];
+    return val === undefined || val === null || val.trim() === "";
+  });
+}
+
 export async function runWorkflow(params: {
   workflowId: string;
   taskTitle: string;
@@ -74,16 +88,14 @@ export async function runWorkflow(params: {
     ...params.context, // Bug #25 fix: merge --context KEY=value pairs into initialContext
   };
 
-  // RC4: Preflight validation — reject dispatch when required context vars are empty
-  const requiredVars = ["repo_path", "repo_name"];
-  const emptyRequired = requiredVars.filter(v => {
-    const val = initialContext[v];
-    return val === undefined || val === null || val.trim() === "";
-  });
+  // Preflight validation: only workflow-declared empty context placeholders are required.
+  const emptyRequired = getEmptyRequiredContextVars(workflow.context, initialContext);
   if (emptyRequired.length > 0) {
+    const repoHint = emptyRequired.some(v => v === "repo_path" || v === "repo_name")
+      ? " Pass --repo-path=/path/to/repo and --context repo_name=my-project at dispatch time."
+      : "";
     throw new Error(
-      `Required context variable(s) empty: ${emptyRequired.join(", ")}. ` +
-      `Pass --repo-path=/path/to/repo and --context repo_name=my-project at dispatch time.`
+      `Required context variable(s) empty: ${emptyRequired.join(", ")}.${repoHint}`
     );
   }
 

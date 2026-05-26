@@ -5,6 +5,7 @@ import { readOpenClawConfig, writeOpenClawConfig } from "./openclaw-config.js";
 import { removeMainAgentGuidance } from "./main-agent-guidance.js";
 import {
   resolveAntfarmRoot,
+  resolveOpenClawStateDir,
   resolveRunRoot,
   resolveWorkflowDir,
   resolveWorkflowWorkspaceDir,
@@ -33,6 +34,43 @@ function filterAgentList(
 function isPathWithin(target: string, root: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(target));
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function resolveManagedAgentParentDir(entry: Record<string, unknown>): string | null {
+  const id = typeof entry.id === "string" ? entry.id : "";
+  const agentDir = typeof entry.agentDir === "string" ? entry.agentDir : "";
+  if (!id || !agentDir) {
+    return null;
+  }
+
+  const safeId = id.replace(/[^a-zA-Z0-9_-]/g, "__");
+  const agentsRoot = path.join(resolveOpenClawStateDir(), "agents");
+  const expectedAgentDir = path.join(agentsRoot, safeId, "agent");
+  if (path.resolve(agentDir) !== path.resolve(expectedAgentDir)) {
+    console.warn(`  ⚠ Skipping unmanaged agentDir for ${id}: ${agentDir}`);
+    return null;
+  }
+
+  const parentDir = path.dirname(agentDir);
+  if (!isPathWithin(parentDir, agentsRoot) || path.resolve(parentDir) === path.resolve(agentsRoot)) {
+    console.warn(`  ⚠ Skipping unmanaged agent parent for ${id}: ${parentDir}`);
+    return null;
+  }
+  return parentDir;
+}
+
+export async function removeManagedAgentParents(agents: Array<Record<string, unknown>>): Promise<void> {
+  for (const entry of agents) {
+    const parentDir = resolveManagedAgentParentDir(entry);
+    if (!parentDir) {
+      continue;
+    }
+    // Remove the entire parent directory (e.g. ~/.openclaw/agents/bug-fix_triager/)
+    // since both agent/ and sessions/ inside it are antfarm-managed.
+    if (await pathExists(parentDir)) {
+      await fs.rm(parentDir, { recursive: true, force: true });
+    }
+  }
 }
 
 /**
@@ -170,18 +208,7 @@ export async function uninstallWorkflow(params: {
   removeRunRecords(params.workflowId);
   await removeAgentCrons(params.workflowId);
 
-  for (const entry of removedAgents) {
-    const agentDir = typeof entry.agentDir === "string" ? entry.agentDir : "";
-    if (!agentDir) {
-      continue;
-    }
-    // Remove the entire parent directory (e.g. ~/.openclaw/agents/bug-fix_triager/)
-    // since both agent/ and sessions/ inside it are antfarm-managed
-    const parentDir = path.dirname(agentDir);
-    if (await pathExists(parentDir)) {
-      await fs.rm(parentDir, { recursive: true, force: true });
-    }
-  }
+  await removeManagedAgentParents(removedAgents);
 
   return { workflowId: params.workflowId, workflowDir };
 }
@@ -256,23 +283,12 @@ export async function uninstallAllWorkflows(): Promise<void> {
     }
   }
 
-  for (const entry of removedAgents) {
-    const agentDir = typeof entry.agentDir === "string" ? entry.agentDir : "";
-    if (!agentDir) {
-      continue;
-    }
-    // Remove the entire parent directory (e.g. ~/.openclaw/agents/bug-fix_triager/)
-    // since both agent/ and sessions/ inside it are antfarm-managed
-    const parentDir = path.dirname(agentDir);
-    if (await pathExists(parentDir)) {
-      await fs.rm(parentDir, { recursive: true, force: true });
-    }
-  }
+  await removeManagedAgentParents(removedAgents);
 
   const antfarmRoot = resolveAntfarmRoot();
   if (await pathExists(antfarmRoot)) {
-    // Clean up remaining runtime files (dashboard.pid, dashboard.log, events.jsonl, logs/)
-    for (const name of ["dashboard.pid", "dashboard.log", "events.jsonl", "logs"]) {
+    // Clean up remaining runtime files (dashboard.pid, dashboard.port, dashboard.log, events.jsonl, logs/)
+    for (const name of ["dashboard.pid", "dashboard.port", "dashboard.log", "events.jsonl", "logs"]) {
       const p = path.join(antfarmRoot, name);
       if (await pathExists(p)) {
         await fs.rm(p, { recursive: true, force: true });

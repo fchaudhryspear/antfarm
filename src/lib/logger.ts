@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { randomUUID } from "node:crypto";
 
 const LOG_DIR = path.join(os.homedir(), ".openclaw", "antfarm", "logs");
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB
@@ -64,22 +65,85 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function createLockToken(): string {
+  return `${process.pid}:${randomUUID()}`;
+}
+
+function readLockTokenSync(lockFile: string): string | undefined {
+  try {
+    return fs.readFileSync(lockFile, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function removeOwnLockSync(lockFile: string, lockToken: string): void {
+  if (readLockTokenSync(lockFile) === lockToken) {
+    fs.rmSync(lockFile, { force: true });
+  }
+}
+
+function isLockOwnerAlive(lockToken: string): boolean {
+  const [pidValue] = lockToken.split(":", 1);
+  const pid = Number(pidValue);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function removeStaleLockSync(lockFile: string): boolean {
+  const stats = fs.statSync(lockFile);
+  const lockToken = readLockTokenSync(lockFile);
+
+  if (
+    Date.now() - stats.mtimeMs <= STALE_LOCK_MS ||
+    (lockToken !== undefined && isLockOwnerAlive(lockToken))
+  ) {
+    return false;
+  }
+
+  const currentStats = fs.statSync(lockFile);
+  const currentToken = readLockTokenSync(lockFile);
+  if (
+    currentStats.dev === stats.dev &&
+    currentStats.ino === stats.ino &&
+    Date.now() - currentStats.mtimeMs > STALE_LOCK_MS &&
+    currentToken === lockToken
+  ) {
+    fs.rmSync(lockFile, { force: true });
+    return true;
+  }
+
+  return false;
+}
+
 function withLogLockSync(writeLog: () => void): void {
   const lockFile = getLockFile();
   let lockFd: number | undefined;
+  let lockToken: string | undefined;
 
   while (lockFd === undefined) {
     try {
       lockFd = fs.openSync(lockFile, "wx");
+      lockToken = createLockToken();
+      fs.writeFileSync(lockFd, lockToken, "utf-8");
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "EEXIST") {
         throw error;
       }
       try {
-        const stats = fs.statSync(lockFile);
-        if (Date.now() - stats.mtimeMs > STALE_LOCK_MS) {
-          fs.rmSync(lockFile, { force: true });
+        if (removeStaleLockSync(lockFile)) {
           continue;
         }
       } catch (statError) {
@@ -91,11 +155,15 @@ function withLogLockSync(writeLog: () => void): void {
     }
   }
 
+  if (lockToken === undefined) {
+    throw new Error("Log lock acquired without ownership token");
+  }
+
   try {
     writeLog();
   } finally {
     fs.closeSync(lockFd);
-    fs.rmSync(lockFile, { force: true });
+    removeOwnLockSync(lockFile, lockToken);
   }
 }
 

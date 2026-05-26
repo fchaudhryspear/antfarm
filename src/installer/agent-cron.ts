@@ -128,6 +128,16 @@ The workflow cannot advance until you report. Your session ending without report
 const DEFAULT_POLLING_TIMEOUT_SECONDS = 1800; // 30 min — Phase A timeout tuning (was 600/10min)
 const DEFAULT_POLLING_MODEL = "default";
 
+type AgentCronJobSpec = {
+  name: string;
+  schedule: { kind: string; everyMs?: number; anchorMs?: number };
+  sessionTarget: string;
+  agentId: string;
+  payload: { kind: string; message: string; model?: string; timeoutSeconds?: number };
+  delivery: { mode: "none" | "announce"; channel?: string; to?: string };
+  enabled: boolean;
+};
+
 function extractModel(value: unknown): string | undefined {
   if (!value) return undefined;
   if (typeof value === "string") return value;
@@ -160,6 +170,22 @@ async function resolveAgentCronModel(agentId: string, requestedModel?: string): 
   }
 
   return requestedModel;
+}
+
+export function cronNeedsRecreate(existing: any, desired: AgentCronJobSpec): boolean {
+  return existing.schedule?.kind !== desired.schedule.kind
+    || existing.schedule?.everyMs !== desired.schedule.everyMs
+    || existing.schedule?.anchorMs !== desired.schedule.anchorMs
+    || existing.sessionTarget !== desired.sessionTarget
+    || existing.agentId !== desired.agentId
+    || existing.payload?.kind !== desired.payload.kind
+    || existing.payload?.message !== desired.payload.message
+    || existing.payload?.model !== desired.payload.model
+    || existing.payload?.timeoutSeconds !== desired.payload.timeoutSeconds
+    || existing.delivery?.mode !== desired.delivery.mode
+    || existing.delivery?.channel !== desired.delivery.channel
+    || existing.delivery?.to !== desired.delivery.to
+    || existing.enabled !== desired.enabled;
 }
 
 export function buildPollingPrompt(workflowId: string, agentId: string, workModel?: string): string {
@@ -327,40 +353,30 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
     const timeoutSeconds = workflowPollingTimeout;
     const agentIndex = agents.indexOf(agent);
     const anchorMs = agentIndex * 60_000;
+    const desiredCron: AgentCronJobSpec = {
+      name: cronName,
+      schedule: { kind: "every", everyMs, anchorMs },
+      sessionTarget: "isolated",
+      agentId,
+      payload: { kind: "agentTurn", message: prompt, model: pollingModel, timeoutSeconds },
+      delivery: { mode: "none" },
+      enabled: true,
+    };
 
     if (!existing) {
       // Missing — create it
-      const result = await createAgentCronJob({
-        name: cronName,
-        schedule: { kind: "every", everyMs, anchorMs },
-        sessionTarget: "isolated",
-        agentId,
-        payload: { kind: "agentTurn", message: prompt, model: pollingModel, timeoutSeconds },
-        delivery: { mode: "none" },
-        enabled: true,
-      });
+      const result = await createAgentCronJob(desiredCron);
       if (!result.ok) {
         throw new Error(`Failed to create cron job for agent "${agent.id}": ${result.error}`);
       }
       log.debug(`Created missing cron for agent "${agent.id}"`, { workflowId: workflow.id, cronName });
     } else {
-      // Exists — check for model OR delivery drift
-      const cronModel = existing.payload?.model ?? workflowPollingModel;
-      const cronDelivery = existing.delivery?.mode ?? "announce";
-      const needsRecreate = cronModel !== pollingModel || cronDelivery !== "none";
+      // Exists — check for behaviorally relevant drift.
+      const needsRecreate = cronNeedsRecreate(existing, desiredCron);
       if (needsRecreate) {
-        // Model drift — delete and recreate with correct model
-        log.debug(`Drift detected for "${agent.id}": model=${cronModel}->${pollingModel} delivery=${cronDelivery}->none.`, { workflowId: workflow.id, cronName });
+        log.debug(`Drift detected for "${agent.id}"; recreating cron.`, { workflowId: workflow.id, cronName });
         await deleteAgentCronJobByName(cronName);
-        const result = await createAgentCronJob({
-          name: cronName,
-          schedule: { kind: "every", everyMs, anchorMs },
-          sessionTarget: "isolated",
-          agentId,
-          payload: { kind: "agentTurn", message: prompt, model: pollingModel, timeoutSeconds },
-          delivery: { mode: "none" },
-          enabled: true,
-        });
+        const result = await createAgentCronJob(desiredCron);
         if (!result.ok) {
           throw new Error(`Failed to recreate cron job for agent "${agent.id}": ${result.error}`);
         }

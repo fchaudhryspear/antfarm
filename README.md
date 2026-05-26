@@ -18,7 +18,7 @@ That's it. Run `antfarm workflow list` to see available workflows.
 
 > **Not on npm.** Antfarm is installed from GitHub, not the npm registry. There is an unrelated `antfarm` package on npm — that's not this.
 
-> **Requires Node.js >= 22.** If `antfarm` fails with a `node:sqlite` error, make sure you're running real Node.js 22+, not Bun's node wrapper (see [#54](https://github.com/snarktank/antfarm/issues/54)).
+> **Requires Node.js >= 22.13.0.** If `antfarm` fails with a `node:sqlite` error, make sure you're running real Node.js 22.13.0+, not Bun's node wrapper (see [#54](https://github.com/snarktank/antfarm/issues/54)).
 
 ---
 
@@ -199,7 +199,7 @@ antfarm dashboard status       # Check status
 
 ## Requirements
 
-- Node.js >= 22
+- Node.js >= 22.13.0
 - [OpenClaw](https://github.com/openclaw/openclaw) **v2026.2.9+** running on the host
   - Antfarm uses cron jobs for workflow orchestration. Older OpenClaw versions may not expose the cron tool via `/tools/invoke`. Antfarm will automatically fall back to the `openclaw` CLI, but keeping OpenClaw up to date is recommended: `npm update -g openclaw`
 - `gh` CLI for PR creation steps

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { listCronJobs } from "./gateway-api.js";
+import { createAgentCronJob, listCronJobs } from "./gateway-api.js";
 
 const originalConfigPath = process.env.OPENCLAW_CONFIG_PATH;
 const originalGatewayPassword = process.env.OPENCLAW_GATEWAY_PASSWORD;
@@ -66,5 +66,30 @@ describe("gateway API config resolution", () => {
     assert.equal(result.ok, true);
     assert.equal(requestedUrl, "http://127.0.0.1:19876/tools/invoke");
     assert.equal(requestedAuth, "Bearer env-path-token");
+  });
+});
+
+describe("createAgentCronJob CLI fallback", () => {
+  it("does not silently drop non-zero schedule anchors", async () => {
+    const dir = await makeTempDir();
+    process.env.OPENCLAW_CONFIG_PATH = path.join(dir, "openclaw.json5");
+    await fs.writeFile(process.env.OPENCLAW_CONFIG_PATH, "{ gateway: { port: 19876 } }\n", "utf-8");
+
+    globalThis.fetch = (async () => {
+      return new Response("missing", { status: 404 });
+    }) as typeof fetch;
+
+    const result = await createAgentCronJob({
+      name: "antfarm/test/developer",
+      schedule: { kind: "every", everyMs: 60_000, anchorMs: 60_000 },
+      sessionTarget: "isolated",
+      agentId: "test_developer",
+      payload: { kind: "agentTurn", message: "poll" },
+      delivery: { mode: "none" },
+      enabled: true,
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error ?? "", /cannot preserve schedule\.anchorMs/);
   });
 });

@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { buildWorkPrompt } from "./agent-cron.js";
+import { buildWorkPrompt, cronNeedsRecreate } from "./agent-cron.js";
 
 const AGENT_CRON_SOURCE = path.resolve(import.meta.dirname, "../../src/installer/agent-cron.ts");
 const GATEWAY_API_SOURCE = path.resolve(import.meta.dirname, "../../src/installer/gateway-api.ts");
@@ -47,5 +47,43 @@ describe("workflow cron deletion matching", () => {
     assert.match(source, /export async function deleteAgentCronJobByName\(name: string\)/);
     assert.match(source, /job\.name === name/);
     assert.match(source, /job\.name\.startsWith\(namePrefix\)/);
+  });
+});
+
+describe("workflow cron reconciliation drift detection", () => {
+  const desiredCron = {
+    name: "antfarm/code-fix/developer",
+    schedule: { kind: "every", everyMs: 60_000, anchorMs: 0 },
+    sessionTarget: "isolated",
+    agentId: "code-fix_developer",
+    payload: {
+      kind: "agentTurn",
+      message: "poll for work",
+      model: "default",
+      timeoutSeconds: 1800,
+    },
+    delivery: { mode: "none" as const },
+    enabled: true,
+  };
+
+  it("accepts an existing cron that already matches the desired behavior", () => {
+    assert.equal(cronNeedsRecreate({ ...desiredCron }, desiredCron), false);
+  });
+
+  it("recreates when schedule, prompt, timeout, enabled, or routing fields drift", () => {
+    const staleCrons = [
+      { ...desiredCron, schedule: { ...desiredCron.schedule, everyMs: 300_000 } },
+      { ...desiredCron, schedule: { ...desiredCron.schedule, anchorMs: 60_000 } },
+      { ...desiredCron, payload: { ...desiredCron.payload, message: "old prompt" } },
+      { ...desiredCron, payload: { ...desiredCron.payload, timeoutSeconds: 600 } },
+      { ...desiredCron, enabled: false },
+      { ...desiredCron, sessionTarget: "main" },
+      { ...desiredCron, agentId: "code-fix_reviewer" },
+      { ...desiredCron, delivery: { mode: "announce" as const } },
+    ];
+
+    for (const staleCron of staleCrons) {
+      assert.equal(cronNeedsRecreate(staleCron, desiredCron), true);
+    }
   });
 });

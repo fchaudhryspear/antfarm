@@ -46,6 +46,49 @@ describe("runMedicCheck", () => {
     assert.equal(events.some((event) => event.event === "run.failed" && event.runId === runId), false);
   });
 
+  it("fails sibling active steps when an abandoned step reaches the hard limit", async () => {
+    const { getDb } = await import("../db.js");
+    const { runMedicCheck } = await import("./medic.js");
+
+    const db = getDb();
+    const runId = crypto.randomUUID();
+    const abandonedStepId = crypto.randomUUID();
+    const pendingStepId = crypto.randomUUID();
+    const runningStepId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const stale = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
+    db.prepare(
+      "INSERT INTO runs (id, workflow_id, task, status, context, created_at, updated_at) VALUES (?, 'wf', 'abandoned task', 'running', '{}', ?, ?)"
+    ).run(runId, now, stale);
+    db.prepare(
+      "INSERT INTO steps (id, run_id, step_id, agent_id, step_index, input_template, expects, status, output, abandoned_count, created_at, updated_at) VALUES (?, ?, 'abandoned-step', 'agent', 0, '', '', 'running', NULL, 4, ?, ?)"
+    ).run(abandonedStepId, runId, now, stale);
+    db.prepare(
+      "INSERT INTO steps (id, run_id, step_id, agent_id, step_index, input_template, expects, status, created_at, updated_at) VALUES (?, ?, 'pending-sibling', 'agent', 1, '', '', 'pending', ?, ?)"
+    ).run(pendingStepId, runId, now, now);
+    db.prepare(
+      "INSERT INTO steps (id, run_id, step_id, agent_id, step_index, input_template, expects, status, created_at, updated_at) VALUES (?, ?, 'running-sibling', 'agent', 2, '', '', 'running', ?, ?)"
+    ).run(runningStepId, runId, now, now);
+
+    const result = await runMedicCheck();
+
+    const run = db.prepare("SELECT status FROM runs WHERE id = ?").get(runId) as { status: string };
+    const steps = db.prepare(
+      "SELECT id, status, output, abandoned_count FROM steps WHERE run_id = ? ORDER BY step_index"
+    ).all(runId) as Array<{ id: string; status: string; output: string | null; abandoned_count: number }>;
+    const finding = result.findings.find((item) => item.stepId === abandonedStepId);
+
+    assert.equal(run.status, "failed");
+    assert.deepEqual(steps.map((step) => step.status), ["failed", "failed", "failed"]);
+    assert.equal(steps[0].output, "Medic: abandoned too many times");
+    assert.equal(steps[0].abandoned_count, 5);
+    assert.equal(steps[1].output, "Medic: run failed after step abandoned too many times");
+    assert.equal(steps[2].output, "Medic: run failed after step abandoned too many times");
+    assert.equal(finding?.action, "reset_step");
+    assert.equal(finding?.remediated, true);
+  });
+
   it("does not reset a stale-session step that already reached a terminal state", async () => {
     const { getDb } = await import("../db.js");
     const { runMedicCheck } = await import("./medic.js");

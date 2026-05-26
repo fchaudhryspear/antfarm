@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -10,7 +10,8 @@ const root = join(__dirname, "..", "..");
 const htmlPath = join(root, "landing", "index.html");
 const readmePath = join(root, "README.md");
 const installPath = join(root, "scripts", "install.sh");
-const mutablePaths = [htmlPath, readmePath, installPath];
+const distPackagePath = join(root, "dist", "package.json");
+const mutablePaths = [htmlPath, readmePath, installPath, distPackagePath];
 const scriptPath = join(root, "scripts", "inject-version.js");
 
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -94,5 +95,19 @@ describe("inject-version", () => {
     assert.doesNotMatch(readFileSync(readmePath, "utf8"), new RegExp(staleUrl));
     assert.match(readFileSync(installPath, "utf8"), new RegExp(expectedUrl));
     assert.doesNotMatch(readFileSync(installPath, "utf8"), new RegExp(staleUrl));
+  });
+
+  it("rewrites dist package bin paths relative to the dist package root", () => {
+    execFileSync("node", [scriptPath], { cwd: root });
+
+    const distPkg = JSON.parse(readFileSync(distPackagePath, "utf8"));
+    assert.equal(distPkg.bin.antfarm, "cli/cli.js");
+
+    const binPath = join(root, "dist", distPkg.bin.antfarm);
+    assert.ok(existsSync(binPath), "dist package bin path should resolve");
+    assert.ok(
+      statSync(binPath).mode & 0o111,
+      "dist package bin target should be executable"
+    );
   });
 });

@@ -69,24 +69,10 @@ export function transitionRtbf(input: {
   proofSigningSecret: string;
   kmsDeletionEvidence: Record<string, string>;
 }): string {
-  const registry = input.db.prepare(`
-    SELECT rtbf_state, legal_hold FROM factory_subject_registry WHERE tenant_id = ? AND subject_id_hash = ?
-  `).get(input.tenantId, input.subjectIdHash) as { rtbf_state: RtbfState; legal_hold: number } | undefined;
-  if (!registry) throw new Error("unknown subject");
-  if (registry.legal_hold) throw new Error("legal hold blocks RTBF transition");
-  if (input.nextState === "finalized" && registry.rtbf_state !== "rtbf_reversible") {
-    throw new Error("finalization requires reversible window");
-  }
-
   const requestState = input.nextState;
   const expectedRequestState = input.nextState === "reversible" ? "requested" : "reversible";
-  const request = input.db.prepare(`
-    SELECT state FROM factory_rtbf_requests WHERE id = ? AND tenant_id = ? AND subject_id_hash = ?
-  `).get(input.requestId, input.tenantId, input.subjectIdHash) as { state: string } | undefined;
-  if (!request) throw new Error("unknown RTBF request");
-  if (request.state !== expectedRequestState) throw new Error("RTBF request state mismatch");
-
   const registryState = input.nextState === "reversible" ? "rtbf_reversible" : "rtbf_finalized";
+  const expectedRegistryState = input.nextState === "reversible" ? "rtbf_requested" : "rtbf_reversible";
   const proof = {
     request_id: input.requestId,
     tenant_id: input.tenantId,
@@ -98,22 +84,43 @@ export function transitionRtbf(input: {
   const signature = signProof(input.proofSigningSecret, proof);
   input.db.exec("BEGIN IMMEDIATE");
   try {
-    input.db.prepare(`
+    const request = input.db.prepare(`
+      SELECT state FROM factory_rtbf_requests WHERE id = ? AND tenant_id = ? AND subject_id_hash = ?
+    `).get(input.requestId, input.tenantId, input.subjectIdHash) as { state: string } | undefined;
+    if (!request) throw new Error("unknown RTBF request");
+    if (request.state !== expectedRequestState) throw new Error("RTBF request state mismatch");
+
+    const registry = input.db.prepare(`
+      SELECT rtbf_state, legal_hold FROM factory_subject_registry WHERE tenant_id = ? AND subject_id_hash = ?
+    `).get(input.tenantId, input.subjectIdHash) as { rtbf_state: RtbfState; legal_hold: number } | undefined;
+    if (!registry) throw new Error("unknown subject");
+    if (registry.legal_hold) throw new Error("legal hold blocks RTBF transition");
+    if (registry.rtbf_state !== expectedRegistryState) {
+      throw new Error(input.nextState === "finalized" ? "finalization requires reversible window" : "RTBF registry state mismatch");
+    }
+
+    const requestUpdate = input.db.prepare(`
       UPDATE factory_rtbf_requests
       SET state = ?, reversible_at = CASE WHEN ? = 'reversible' THEN datetime('now') ELSE reversible_at END,
         finalized_at = CASE WHEN ? = 'finalized' THEN datetime('now') ELSE finalized_at END,
         deletion_proof_id = ?
-      WHERE id = ? AND tenant_id = ? AND subject_id_hash = ?
-    `).run(requestState, requestState, requestState, proofId, input.requestId, input.tenantId, input.subjectIdHash);
-    input.db.prepare(`
+      WHERE id = ? AND tenant_id = ? AND subject_id_hash = ? AND state = ?
+    `).run(requestState, requestState, requestState, proofId, input.requestId, input.tenantId, input.subjectIdHash, expectedRequestState);
+    if (requestUpdate.changes !== 1) {
+      throw new Error("RTBF request state mismatch");
+    }
+    const registryUpdate = input.db.prepare(`
       UPDATE factory_subject_registry
       SET rtbf_state = ?,
         rtbf_reversible_at = CASE WHEN ? = 'rtbf_reversible' THEN datetime('now') ELSE rtbf_reversible_at END,
         rtbf_finalized_at = CASE WHEN ? = 'rtbf_finalized' THEN datetime('now') ELSE rtbf_finalized_at END,
         deletion_proof_id = ?,
         updated_at = datetime('now')
-      WHERE tenant_id = ? AND subject_id_hash = ?
-    `).run(registryState, registryState, registryState, proofId, input.tenantId, input.subjectIdHash);
+      WHERE tenant_id = ? AND subject_id_hash = ? AND rtbf_state = ? AND legal_hold = 0
+    `).run(registryState, registryState, registryState, proofId, input.tenantId, input.subjectIdHash, expectedRegistryState);
+    if (registryUpdate.changes !== 1) {
+      throw new Error("RTBF registry state mismatch");
+    }
     input.db.prepare(`
       INSERT INTO factory_tenant_audit_log (
         id, tenant_id, event_type, event_chain_type, actor, actor_role, actor_class,

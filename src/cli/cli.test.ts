@@ -86,6 +86,15 @@ describe("workflow stop CLI", () => {
 });
 
 describe("CLI bootstrap", () => {
+  it("declares the first Node.js release with node:sqlite support", () => {
+    const pkg = JSON.parse(readFileSync(packagePath, "utf-8"));
+    const source = readFileSync(cliSourcePath, "utf-8");
+
+    assert.equal(pkg.engines.node, ">=22.13.0");
+    assert.ok(source.includes("Node.js >= 22.13.0"), "bootstrap error should name the engine floor");
+    assert.ok(source.includes("Node.js 22.13.0+"), "bootstrap fix should name the engine floor");
+  });
+
   it("checks node:sqlite before loading sqlite-dependent command modules", () => {
     const source = readFileSync(cliSourcePath, "utf-8");
     const sqliteCheck = source.indexOf('await import("node:sqlite")');
@@ -144,6 +153,72 @@ describe("logs CLI", () => {
       });
       assert.ok(output.includes("Run started"), output);
       assert.ok(!output.includes('No events found for run matching "#3"'), output);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("dashboard CLI", () => {
+  it("prints the running daemon port instead of the requested port", () => {
+    const home = mkdtempSync(join(tmpdir(), "antfarm-cli-dashboard-"));
+    try {
+      const antfarmDir = join(home, ".openclaw", "antfarm");
+      mkdirSync(antfarmDir, { recursive: true });
+      writeFileSync(join(antfarmDir, "dashboard.pid"), String(process.pid));
+      writeFileSync(join(antfarmDir, "dashboard.port"), "3333");
+
+      const output = execFileSync("node", [cliPath, "dashboard", "--port", "4000"], {
+        encoding: "utf-8",
+        env: { ...process.env, HOME: home },
+      });
+
+      assert.ok(output.includes("Dashboard already running"), output);
+      assert.ok(output.includes("http://localhost:3333"), output);
+      assert.ok(!output.includes("http://localhost:4000"), output);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("cron-recovery CLI", () => {
+  it("reads active runs without requiring the sqlite3 executable", () => {
+    const home = mkdtempSync(join(tmpdir(), "antfarm-cli-cron-"));
+    const emptyPath = join(home, "empty-bin");
+    try {
+      mkdirSync(emptyPath);
+      const antfarmDir = join(home, ".openclaw", "antfarm");
+      mkdirSync(antfarmDir, { recursive: true });
+
+      const now = new Date("2026-05-26T12:00:00.000Z").toISOString();
+      const db = new DatabaseSync(join(antfarmDir, "antfarm.db"));
+      try {
+        db.exec(`
+          CREATE TABLE runs (
+            id TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            task TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running',
+            context TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        `);
+        db.prepare(
+          "INSERT INTO runs (id, workflow_id, task, status, context, created_at, updated_at) VALUES (?, ?, ?, ?, '{}', ?, ?)"
+        ).run("run-cron-recovery-test", "test-workflow", "recover crons", "running", now, now);
+      } finally {
+        db.close();
+      }
+
+      const output = execFileSync(process.execPath, [cliPath, "cron-recovery", "--dry-run"], {
+        encoding: "utf-8",
+        env: { ...process.env, HOME: home, PATH: emptyPath },
+      });
+
+      assert.ok(output.includes("Found 1 active run(s)"), output);
+      assert.ok(output.includes("test-workflow"), output);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

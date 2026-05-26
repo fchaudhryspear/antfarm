@@ -60,3 +60,15 @@ if (existsSync(installPath)) {
   writeFileSync(installPath, install, "utf8");
   console.log(`Injected version ${version} into scripts/install.sh`);
 }
+
+// --- dist/package.json ---
+const distPackagePath = join(root, "dist", "package.json");
+if (existsSync(distPackagePath)) {
+  const distPkg = JSON.parse(readFileSync(distPackagePath, "utf8"));
+  distPkg.bin = {
+    ...distPkg.bin,
+    antfarm: "cli/cli.js",
+  };
+  writeFileSync(distPackagePath, `${JSON.stringify(distPkg, null, 2)}\n`, "utf8");
+  console.log("Updated dist/package.json bin paths");
+}

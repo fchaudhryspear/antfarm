@@ -170,7 +170,19 @@ export function generateContextPack(input: GenerateContextPackInput): GeneratedC
 
   const redactedDescription = redactText(input.factoryItem.description, ruleset);
   const redactedTask = redactText(input.task, ruleset);
-  const redactions = [...new Set([...redactedDescription.redactions, ...redactedTask.redactions])].sort();
+  const redactedPriorArtifacts = priorArtifacts.map((artifact) => {
+    const redactedTitle = redactText(artifact.title, ruleset);
+    const redactedPathOrUrl = redactText(artifact.path_or_url, ruleset);
+    return {
+      artifact: { ...artifact, title: redactedTitle.text, path_or_url: redactedPathOrUrl.text },
+      redactions: [...redactedTitle.redactions, ...redactedPathOrUrl.redactions],
+    };
+  });
+  const redactions = [...new Set([
+    ...redactedDescription.redactions,
+    ...redactedTask.redactions,
+    ...redactedPriorArtifacts.flatMap((artifact) => artifact.redactions),
+  ])].sort();
 
   const manifestWithoutChecksum: Omit<ContextPackManifest, "pack_checksum"> = {
     schema_version: "1.0",
@@ -191,13 +203,13 @@ export function generateContextPack(input: GenerateContextPackInput): GeneratedC
     repo_path: input.repoPath ? path.resolve(input.repoPath) : null,
     constraints,
     sources,
-    prior_artifacts: priorArtifacts,
+    prior_artifacts: redactedPriorArtifacts.map(({ artifact }) => artifact),
     redaction_ruleset_version: ruleset,
     redactions,
   };
 
   const prompt = buildPrompt({ manifestWithoutChecksum });
-  const priorArtifactManifest = stableStringify(priorArtifacts);
+  const priorArtifactManifest = stableStringify(manifestWithoutChecksum.prior_artifacts);
   const packChecksum = sha256(`${stableStringify(manifestWithoutChecksum)}\n${prompt}\n${priorArtifactManifest}`);
   const manifest: ContextPackManifest = { ...manifestWithoutChecksum, pack_checksum: packChecksum };
 
@@ -218,7 +230,7 @@ export function generateContextPack(input: GenerateContextPackInput): GeneratedC
 
   fs.writeFileSync(path.join(packPath, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
   fs.writeFileSync(path.join(packPath, "prompt.md"), prompt, "utf-8");
-  fs.writeFileSync(path.join(packPath, "prior-artifacts", "manifest.json"), `${JSON.stringify(priorArtifacts, null, 2)}\n`, "utf-8");
+  fs.writeFileSync(path.join(packPath, "prior-artifacts", "manifest.json"), `${JSON.stringify(manifestWithoutChecksum.prior_artifacts, null, 2)}\n`, "utf-8");
 
   return { path: packPath, checksum: packChecksum, manifest };
 }

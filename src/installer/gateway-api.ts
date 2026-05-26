@@ -163,6 +163,10 @@ export async function createAgentCronJob(job: {
       args.push("--every", `${job.schedule.everyMs}ms`);
     }
 
+    if (job.schedule.anchorMs) {
+      throw new Error("OpenClaw CLI fallback cannot preserve schedule.anchorMs; gateway cron tool is required for anchored cron creation");
+    }
+
     args.push("--session", job.sessionTarget === "isolated" ? "isolated" : "main");
 
     if (job.agentId) {
