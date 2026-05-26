@@ -4,7 +4,7 @@ Antfarm provisions multi-agent workflows for OpenClaw. It installs workflow agen
 
 ## Installing Antfarm
 
-**Prerequisites:** Node.js >= 22, OpenClaw v2026.2.9+, `gh` CLI (for PR steps).
+**Prerequisites:** Node.js >= 22.13.0, OpenClaw v2026.2.9+, `gh` CLI (for PR steps).
 
 > **Do NOT run `npm install antfarm`.** There is an unrelated package on npm with that name. Antfarm is installed from GitHub only.
 
@@ -34,7 +34,7 @@ Antfarm provisions multi-agent workflows for OpenClaw. It installs workflow agen
 
 5. **Verify:** Run `antfarm workflow list` — you should see the available workflows.
 
-If `antfarm` fails with a `node:sqlite` error, your `node` binary may be Bun's wrapper instead of real Node.js 22+. Check with `node -e "require('node:sqlite')"`. See [#54](https://github.com/snarktank/antfarm/issues/54) for workarounds.
+If `antfarm` fails with a `node:sqlite` error, your `node` binary may be Bun's wrapper instead of real Node.js 22.13.0+. Check with `node -e "require('node:sqlite')"`. See [#54](https://github.com/snarktank/antfarm/issues/54) for workarounds.
 
 ## Why Antfarm
 

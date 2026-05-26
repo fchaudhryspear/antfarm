@@ -10,6 +10,10 @@ export function getPidFile(): string {
   return path.join(os.homedir(), ".openclaw", "antfarm", "dashboard.pid");
 }
 
+export function getPortFile(): string {
+  return path.join(os.homedir(), ".openclaw", "antfarm", "dashboard.port");
+}
+
 export function getLogFile(): string {
   return path.join(os.homedir(), ".openclaw", "antfarm", "dashboard.log");
 }
@@ -29,8 +33,16 @@ export function isRunning(): { running: true; pid: number } | { running: false }
   } catch {
     // Stale PID file
     try { fs.unlinkSync(pidFile); } catch {}
+    try { fs.unlinkSync(getPortFile()); } catch {}
     return { running: false };
   }
+}
+
+function readPortFile(): number | undefined {
+  const portFile = getPortFile();
+  if (!fs.existsSync(portFile)) return undefined;
+  const port = parseInt(fs.readFileSync(portFile, "utf-8").trim(), 10);
+  return Number.isNaN(port) ? undefined : port;
 }
 
 function readPidFile(): number | null {
@@ -65,7 +77,7 @@ async function acquireStartLock(): Promise<number> {
 export async function startDaemon(port = 3333): Promise<{ pid: number; port: number }> {
   const status = isRunning();
   if (status.running) {
-    return { pid: status.pid, port };
+    return { pid: status.pid, port: readPortFile() ?? port };
   }
 
   const logFile = getLogFile();
@@ -76,7 +88,7 @@ export async function startDaemon(port = 3333): Promise<{ pid: number; port: num
   try {
     const lockedStatus = isRunning();
     if (lockedStatus.running) {
-      return { pid: lockedStatus.pid, port };
+      return { pid: lockedStatus.pid, port: readPortFile() ?? port };
     }
 
     let out: number | null = null;
@@ -124,6 +136,7 @@ export async function startDaemon(port = 3333): Promise<{ pid: number; port: num
     if (!child.pid || pid !== child.pid) {
       if (pid !== null) {
         try { fs.unlinkSync(getPidFile()); } catch {}
+        try { fs.unlinkSync(getPortFile()); } catch {}
       }
       throw new Error("Daemon failed to start. Check " + logFile);
     }
@@ -146,11 +159,15 @@ export function stopDaemon(): boolean {
     process.kill(status.pid, "SIGTERM");
   } catch {}
   try { fs.unlinkSync(getPidFile()); } catch {}
+  try { fs.unlinkSync(getPortFile()); } catch {}
   return true;
 }
 
 export function getDaemonStatus(): { running: boolean; pid?: number; port?: number } | null {
   const status = isRunning();
   if (!status.running) return { running: false };
-  return { running: true, pid: status.pid };
+  const port = readPortFile();
+  return port === undefined
+    ? { running: true, pid: status.pid }
+    : { running: true, pid: status.pid, port };
 }

@@ -533,6 +533,13 @@ function getAgentAbandonmentThresholdMs(agentId: string): number {
   return (getRoleTimeoutSeconds(role) + 5 * 60) * 1000;
 }
 
+function getStepTimeoutMinutes(timeoutMinutes: number | null, agentId: string): number {
+  if (timeoutMinutes !== null && Number.isFinite(timeoutMinutes) && timeoutMinutes > 0) {
+    return timeoutMinutes;
+  }
+  return Math.round(getAgentAbandonmentThresholdMs(agentId) / 60000);
+}
+
 /**
  * Find steps that have been "running" for too long and reset them to pending.
  * This catches cases where an agent claimed a step but never completed/failed it.
@@ -552,9 +559,7 @@ export function cleanupAbandonedSteps(): void {
   // Filter to steps exceeding their per-step or role-specific threshold
   const abandonedSteps = runningSteps.filter(step => {
     // Issue #341: Per-step timeout_minutes takes priority over role-based default
-    const threshold = step.timeout_minutes
-      ? step.timeout_minutes * 60 * 1000
-      : getAgentAbandonmentThresholdMs(step.agent_id);
+    const threshold = getStepTimeoutMinutes(step.timeout_minutes, step.agent_id) * 60 * 1000;
     return step.age_ms > threshold;
   });
 
@@ -596,7 +601,7 @@ export function cleanupAbandonedSteps(): void {
         } else {
           db.prepare("UPDATE stories SET status = 'pending', retry_count = ?, updated_at = datetime('now') WHERE id = ?").run(newRetry, story.id);
           db.prepare("UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = datetime('now') WHERE id = ?").run(step.id);
-          const configuredTimeoutMin = step.timeout_minutes ?? Math.round(getAgentAbandonmentThresholdMs(step.agent_id) / 60000);
+          const configuredTimeoutMin = getStepTimeoutMinutes(step.timeout_minutes, step.agent_id);
           const actualDurationMin = Math.round(step.age_ms / 60000);
           const reminderMsg = `⚠️ Retry ${newRetry}/${story.max_retries} — story "${story.story_id}" (${story.title}) timed out after ${actualDurationMin}min (limit: ${configuredTimeoutMin}min). Agent should review context and complete without dropping.`;
           emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reminderMsg });
@@ -617,7 +622,7 @@ export function cleanupAbandonedSteps(): void {
         "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
       ).run(step.run_id);
       const wfId = getWorkflowId(step.run_id);
-      const configuredTimeoutMin = step.timeout_minutes ?? Math.round(getAgentAbandonmentThresholdMs(step.agent_id) / 60000);
+      const configuredTimeoutMin = getStepTimeoutMinutes(step.timeout_minutes, step.agent_id);
       const actualDurationMin = Math.round(step.age_ms / 60000);
       emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: `Retries exhausted — step timed out after ${actualDurationMin}min (limit: ${configuredTimeoutMin}min)` });
       emitEvent({ ts: new Date().toISOString(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: "Agent abandoned step without completing" });
@@ -633,7 +638,7 @@ export function cleanupAbandonedSteps(): void {
       const escalatedModel = escalateStepModel(step.id);
       const escalationNote = escalatedModel ? ` Model escalated to ${escalatedModel}.` : "";
       // Issue #341: Log timeout with actual duration vs configured timeout
-      const configuredTimeoutMin = step.timeout_minutes ?? Math.round(getAgentAbandonmentThresholdMs(step.agent_id) / 60000);
+      const configuredTimeoutMin = getStepTimeoutMinutes(step.timeout_minutes, step.agent_id);
       const actualDurationMin = Math.round(step.age_ms / 60000);
       const reminderMsg = `⚠️ Retry ${newAbandonCount}/${MAX_ABANDON_RESETS} — step "${step.step_id}" timed out after ${actualDurationMin}min (limit: ${configuredTimeoutMin}min).${escalationNote} Agent should review context and complete without dropping.`;
       emitEvent({ ts: new Date().toISOString(), event: "step.timeout", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: reminderMsg });

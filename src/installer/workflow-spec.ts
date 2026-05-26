@@ -106,6 +106,9 @@ function validateSteps(steps: WorkflowStep[], workflowDir: string, agentIds: Set
     if (!step.expects?.trim()) {
       throw new Error(`workflow.yml missing step.expects for step "${step.id}"`);
     }
+    if (step.timeout_minutes !== undefined && (!Number.isFinite(step.timeout_minutes) || step.timeout_minutes <= 0)) {
+      throw new Error(`workflow.yml step "${step.id}" timeout_minutes must be positive`);
+    }
   }
 
   // Validate loop config references

@@ -380,7 +380,9 @@ async function main() {
     if (isRunning().running) {
       const status = getDaemonStatus();
       console.log(`Dashboard already running (PID ${status?.pid})`);
-      console.log(`  http://localhost:${port}`);
+      if (status?.port !== undefined) {
+        console.log(`  http://localhost:${status.port}`);
+      }
       return;
     }
 

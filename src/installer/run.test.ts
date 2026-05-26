@@ -2,8 +2,29 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { getEmptyRequiredContextVars } from "./run.js";
 
 const RUN_SOURCE = path.resolve(import.meta.dirname, "../../src/installer/run.ts");
+
+describe("runWorkflow context validation", () => {
+  it("does not require repo context for workflows that do not declare it", () => {
+    const emptyRequired = getEmptyRequiredContextVars(
+      { target: "" },
+      { task: "do it", target: "production" },
+    );
+
+    assert.deepEqual(emptyRequired, []);
+  });
+
+  it("requires only workflow-declared empty context placeholders", () => {
+    const emptyRequired = getEmptyRequiredContextVars(
+      { target: "", repo_path: "/default/repo" },
+      { task: "do it" },
+    );
+
+    assert.deepEqual(emptyRequired, ["target"]);
+  });
+});
 
 describe("runWorkflow startup ordering", () => {
   it("sets up workflow crons before immediate pending-step dispatch", () => {

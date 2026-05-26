@@ -9,16 +9,19 @@ const port = parseInt(process.argv[2], 10) || 3333;
 
 const pidDir = path.join(os.homedir(), ".openclaw", "antfarm");
 const pidFile = path.join(pidDir, "dashboard.pid");
+const portFile = path.join(pidDir, "dashboard.port");
 
 function writePidFile() {
   fs.mkdirSync(pidDir, { recursive: true });
   fs.writeFileSync(pidFile, String(process.pid));
+  fs.writeFileSync(portFile, String(port));
 }
 
 function removePidFile() {
   try {
     if (fs.readFileSync(pidFile, "utf-8").trim() === String(process.pid)) {
       fs.unlinkSync(pidFile);
+      try { fs.unlinkSync(portFile); } catch {}
     }
   } catch {}
 }
@@ -35,9 +38,9 @@ process.on("SIGINT", () => {
 
 process.on("exit", removePidFile);
 
+writePidFile();
 const server = startDashboard(port);
 server.once("listening", () => {
-  writePidFile();
   startIndependentCleanupTimer();
 });
 server.once("error", (error) => {

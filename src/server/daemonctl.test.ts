@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { startDaemon, getPidFile, getLogFile, isRunning } from "./daemonctl.js";
+import { startDaemon, stopDaemon, getPidFile, getPortFile, getLogFile, isRunning, getDaemonStatus } from "./daemonctl.js";
 
 let homeDir: string | null = null;
 const originalHome = process.env.HOME;
@@ -61,10 +61,20 @@ function fakeNodeThatWritesOwnPid() {
     "[ -f \"$count_file\" ] && count=$(cat \"$count_file\")",
     "printf '%s' \"$((count + 1))\" > \"$count_file\"",
     "printf '%s' \"$$\" > \"$HOME/.openclaw/antfarm/dashboard.pid\"",
+    "printf '%s' \"$2\" > \"$HOME/.openclaw/antfarm/dashboard.port\"",
     "sleep 2",
   ].join("\n"));
   fs.chmodSync(fakeNode, 0o755);
   process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+}
+
+async function waitForPidFile() {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(getPidFile())) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for pid file");
 }
 
 describe("daemon startup", () => {
@@ -120,5 +130,34 @@ describe("daemon startup", () => {
     assert.equal(fs.readFileSync(countFile, "utf-8"), "1");
     assert.equal(first.pid, second.pid);
     assert.deepEqual(isRunning(), { running: true, pid: first.pid });
+  });
+
+  it("reports the running daemon's actual port from status metadata", async () => {
+    tempHome();
+    fakeNodeThatWritesOwnPid();
+
+    const first = await startDaemon(3333);
+    const second = await startDaemon(4000);
+
+    assert.equal(second.pid, first.pid);
+    assert.equal(second.port, 3333);
+    assert.deepEqual(getDaemonStatus(), { running: true, pid: first.pid, port: 3333 });
+    assert.equal(fs.readFileSync(getPortFile(), "utf-8"), "3333");
+  });
+
+  it("can stop a daemon while startup confirmation is still pending", async () => {
+    tempHome();
+    fakeNodeThatWritesOwnPid();
+
+    const starting = startDaemon(3333);
+    await waitForPidFile();
+
+    assert.equal(stopDaemon(), true);
+    await assert.rejects(
+      () => starting,
+      /Daemon exited during startup/
+    );
+    assert.equal(fs.existsSync(getPidFile()), false);
+    assert.deepEqual(isRunning(), { running: false });
   });
 });

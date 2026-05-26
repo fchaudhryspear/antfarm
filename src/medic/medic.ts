@@ -59,6 +59,9 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
           db.prepare(
             "UPDATE runs SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
           ).run(finding.runId);
+          db.prepare(
+            "UPDATE steps SET status = 'failed', output = 'Medic: run failed after step abandoned too many times', updated_at = datetime('now') WHERE run_id = ? AND status IN ('waiting', 'pending', 'running')"
+          ).run(finding.runId);
           emitEvent({
             ts: new Date().toISOString(),
             event: "run.failed" as EventType,

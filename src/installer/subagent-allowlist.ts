@@ -50,7 +50,10 @@ export function removeSubagentAllowlist(config: OpenClawConfig, agentIds: string
   if (agentIds.length === 0) {
     return;
   }
-  const agentToAgent = ensureAgentToAgent(config);
+  const agentToAgent = config.tools?.agentToAgent;
+  if (!agentToAgent) {
+    return;
+  }
   const existing = normalizeAllow(agentToAgent.allow);
   if (existing.includes("*")) {
     return;
