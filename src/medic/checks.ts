@@ -9,6 +9,7 @@ export type MedicSeverity = "info" | "warning" | "critical";
 export type MedicActionType =
   | "reset_step"
   | "fail_run"
+  | "complete_run"
   | "teardown_crons"
   | "none";
 
@@ -137,7 +138,7 @@ export function checkDeadRuns(): MedicFinding[] {
       "SELECT COUNT(*) as cnt FROM steps WHERE run_id = ? AND status = 'failed'"
     ).get(run.id) as { cnt: number };
 
-    const action: MedicActionType = "fail_run";
+    const action: MedicActionType = failed.cnt > 0 ? "fail_run" : "complete_run";
     const detail = failed.cnt > 0
       ? `${failed.cnt} failed step(s), no active steps remaining`
       : `All steps terminal but run still marked as running`;

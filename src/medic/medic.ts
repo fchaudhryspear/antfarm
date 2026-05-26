@@ -14,11 +14,11 @@ import {
   type MedicFinding,
 } from "./checks.js";
 import crypto from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 
 // ── DB Migration ────────────────────────────────────────────────────
 
-export function ensureMedicTables(): void {
-  const db = getDb();
+export function ensureMedicTables(db = getDb()): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS medic_checks (
       id TEXT PRIMARY KEY,
@@ -103,6 +103,25 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
         detail: "Medic: zombie run — all steps terminal but run still marked running",
       });
       // Try to clean up crons
+      try { await teardownWorkflowCronsIfIdle(run.workflow_id); } catch {}
+      return true;
+    }
+
+    case "complete_run": {
+      if (!finding.runId) return false;
+      const run = db.prepare("SELECT status, workflow_id FROM runs WHERE id = ?").get(finding.runId) as { status: string; workflow_id: string } | undefined;
+      if (!run || run.status !== "running") return false;
+
+      db.prepare(
+        "UPDATE runs SET status = 'completed', updated_at = datetime('now') WHERE id = ?"
+      ).run(finding.runId);
+      emitEvent({
+        ts: new Date().toISOString(),
+        event: "run.completed" as EventType,
+        runId: finding.runId,
+        workflowId: run.workflow_id,
+        detail: "Medic: zombie run — all steps done but run still marked running",
+      });
       try { await teardownWorkflowCronsIfIdle(run.workflow_id); } catch {}
       return true;
     }
@@ -216,10 +235,9 @@ export interface MedicStatus {
   recentActions: number; // actions taken in last 24h
 }
 
-export function getMedicStatus(): MedicStatus {
+export function getMedicStatus(db: DatabaseSync = getDb()): MedicStatus {
   try {
-    ensureMedicTables();
-    const db = getDb();
+    ensureMedicTables(db);
 
     const last = db.prepare(
       "SELECT checked_at, summary, issues_found, actions_taken FROM medic_checks ORDER BY checked_at DESC LIMIT 1"
@@ -228,7 +246,7 @@ export function getMedicStatus(): MedicStatus {
     const stats = db.prepare(`
       SELECT COUNT(*) as checks, COALESCE(SUM(issues_found), 0) as issues, COALESCE(SUM(actions_taken), 0) as actions
       FROM medic_checks
-      WHERE checked_at > datetime('now', '-24 hours')
+      WHERE julianday(checked_at) > julianday('now', '-24 hours')
     `).get() as { checks: number; issues: number; actions: number };
 
     return {

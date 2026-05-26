@@ -23,17 +23,17 @@ function isTestFile(file: string): boolean {
  */
 export function isFrontendChange(files: string[]): boolean {
   return files.some(file => {
-    if (isTestFile(file)) return false;
+    const normalized = file.replace(/\\/g, '/');
+    if (isTestFile(normalized)) return false;
 
     // Check extension
-    const dot = file.lastIndexOf('.');
+    const dot = normalized.lastIndexOf('.');
     if (dot !== -1) {
-      const ext = file.slice(dot).toLowerCase();
+      const ext = normalized.slice(dot).toLowerCase();
       if (FRONTEND_EXTENSIONS.has(ext)) return true;
     }
 
     // Check directory
-    const normalized = file.replace(/\\/g, '/');
     return FRONTEND_DIRS.some(dir => normalized.includes(`/${dir}`) || normalized.startsWith(dir));
   });
 }

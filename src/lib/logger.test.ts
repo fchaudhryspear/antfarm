@@ -1,9 +1,31 @@
-import { describe, it } from "node:test";
+import fs from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { log, logger, formatEntry, readRecentLogs } from "./logger.js";
 import type { LogLevel } from "./logger.js";
 
 describe("logger", () => {
+  let tempLogDir: string;
+  let previousLogDir: string | undefined;
+
+  beforeEach(async () => {
+    previousLogDir = process.env.ANTFARM_LOG_DIR;
+    tempLogDir = await mkdtemp(path.join(os.tmpdir(), "antfarm-logger-"));
+    process.env.ANTFARM_LOG_DIR = tempLogDir;
+  });
+
+  afterEach(async () => {
+    if (previousLogDir === undefined) {
+      delete process.env.ANTFARM_LOG_DIR;
+    } else {
+      process.env.ANTFARM_LOG_DIR = previousLogDir;
+    }
+    await rm(tempLogDir, { recursive: true, force: true });
+  });
+
   describe("log()", () => {
     it("is synchronous and returns void (not a Promise)", () => {
       const result = log("info", "test message");
@@ -31,6 +53,22 @@ describe("logger", () => {
           stepId: "step-1",
         });
       });
+    });
+
+    it("preserves an existing rotated log when rotating an oversized active log", () => {
+      const logFile = path.join(tempLogDir, "workflow.log");
+      const firstBackup = `${logFile}.1`;
+      const secondBackup = `${logFile}.2`;
+      const previousBackup = "previous backup\n";
+
+      fs.writeFileSync(logFile, Buffer.alloc(5 * 1024 * 1024 + 1, "a"));
+      fs.writeFileSync(firstBackup, previousBackup);
+
+      log("info", "after rotation");
+
+      assert.equal(fs.readFileSync(secondBackup, "utf-8"), previousBackup);
+      assert.equal(fs.statSync(firstBackup).size, 5 * 1024 * 1024 + 1);
+      assert.match(fs.readFileSync(logFile, "utf-8"), /\[INFO\] after rotation/);
     });
   });
 

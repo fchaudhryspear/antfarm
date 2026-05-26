@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
-import { execSync, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { teardownWorkflowCronsIfIdle, pauseWorkflowCrons, resumeWorkflowCrons } from "./agent-cron.js";
 import { buildWorkPrompt } from "./agent-cron.js";
 import { emitEvent } from "./events.js";
@@ -845,7 +845,6 @@ function resetIdleTicks(agentId: string): void {
  */
 async function disableCronForAgent(agentId: string): Promise<void> {
   try {
-    const { execSync } = await import("node:child_process");
     // Find the cron for this agent
     const listResult = await listCronJobs();
     if (!listResult.ok || !listResult.jobs) return;
@@ -855,7 +854,7 @@ async function disableCronForAgent(agentId: string): Promise<void> {
       j.name.endsWith(suffix) && j.name.startsWith(prefix)
     );
     if (match) {
-      execSync(`openclaw cron disable ${match.id}`, { stdio: "pipe" });
+      execFileSync("openclaw", ["cron", "disable", match.id], { stdio: "pipe" });
       logger.info(`Auto-disabled idle cron for ${agentId} (job: ${match.name})`);
     }
   } catch (err) {
@@ -1075,14 +1074,31 @@ export function claimStep(agentId: string): ClaimResult {
         return { found: false };
       }
 
-      // Claim the story
-      db.prepare(
-        "UPDATE stories SET status = 'running', updated_at = datetime('now') WHERE id = ?"
-      ).run(nextStory.id);
-      // Issue #342: Set last_output_at on claim for stale session detection
-      db.prepare(
-        "UPDATE steps SET status = 'running', current_story_id = ?, last_output_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
-      ).run(nextStory.id, step.id);
+      // Claim the story and owning loop step together. If either row was
+      // claimed by another poller after our SELECT, this claimant gets no work.
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const storyClaim = db.prepare(
+          "UPDATE stories SET status = 'running', updated_at = datetime('now') WHERE id = ? AND status = 'pending'"
+        ).run(nextStory.id);
+        if (Number(storyClaim.changes) === 0) {
+          db.exec("ROLLBACK");
+          return { found: false };
+        }
+
+        // Issue #342: Set last_output_at on claim for stale session detection
+        const stepClaim = db.prepare(
+          "UPDATE steps SET status = 'running', current_story_id = ?, last_output_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND status = 'pending'"
+        ).run(nextStory.id, step.id);
+        if (Number(stepClaim.changes) === 0) {
+          db.exec("ROLLBACK");
+          return { found: false };
+        }
+        db.exec("COMMIT");
+      } catch (err) {
+        try { db.exec("ROLLBACK"); } catch {}
+        throw err;
+      }
 
       const wfId = getWorkflowId(step.run_id);
       emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: wfId, stepId: step.step_id, agentId: agentId });
@@ -1136,9 +1152,12 @@ export function claimStep(agentId: string): ClaimResult {
 
   // Single step: existing logic
   // Issue #342: Set last_output_at on claim for stale session detection
-  db.prepare(
+  const stepClaim = db.prepare(
     "UPDATE steps SET status = 'running', last_output_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND status = 'pending'"
   ).run(step.id);
+  if (Number(stepClaim.changes) === 0) {
+    return { found: false };
+  }
   emitEvent({ ts: new Date().toISOString(), event: "step.running", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
   logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
   // Heartbeat: register session for liveness tracking (Issue #339)

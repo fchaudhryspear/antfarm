@@ -21,11 +21,14 @@ for (let i = 0; i < iterations; i++) {
   maxDeferred = Math.max(maxDeferred, result.deferred.length);
 }
 
+const pass = maxSelected <= cap;
 console.log(JSON.stringify({
   agents,
   cap,
   iterations,
   max_selected_per_tick: maxSelected,
   max_deferred_per_tick: maxDeferred,
-  pass: maxSelected <= cap,
+  pass,
 }, null, 2));
+
+process.exitCode = pass ? 0 : 1;

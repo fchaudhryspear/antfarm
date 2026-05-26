@@ -46,6 +46,8 @@ describe('isFrontendChange', () => {
     assert.equal(isFrontendChange(['src/App.test.tsx']), false);
     assert.equal(isFrontendChange(['src/Button.spec.tsx']), false);
     assert.equal(isFrontendChange(['__tests__/landing.html']), false);
+    assert.equal(isFrontendChange(['__tests__\\landing.html']), false);
+    assert.equal(isFrontendChange(['src\\__tests__\\landing.html']), false);
   });
 
   it('returns false for empty input', () => {

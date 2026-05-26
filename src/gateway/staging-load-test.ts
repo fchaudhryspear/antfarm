@@ -78,6 +78,26 @@ function positiveInteger(value: number | undefined, fallback: number): number {
   return Math.trunc(value);
 }
 
+async function boundedMap<T, U>(
+  items: readonly T[],
+  maxParallel: number,
+  worker: (item: T, index: number) => Promise<U>,
+): Promise<U[]> {
+  const results = new Array<U>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(maxParallel, items.length);
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index]!, index);
+    }
+  }));
+
+  return results;
+}
+
 export function resolveGatewayLoadTarget(options: GatewayLoadTestOptions = {}): {
   baselineConcurrentSessions: number;
   multiplier: number;
@@ -282,7 +302,7 @@ export async function runGatewayLoadTest(options: GatewayLoadTestOptions = {}): 
   const rssSamples: number[] = [process.memoryUsage().rss];
 
   try {
-    const created = await Promise.all(Array.from({ length: targetConcurrentSessions }, async () => {
+    const created = await boundedMap(Array.from({ length: targetConcurrentSessions }), maxParallelUnits, async () => {
       try {
         return await requestJson<{ id: string }>(gateway.port, "/sessions", { method: "POST", body: "{}" });
       } catch (error) {
@@ -290,12 +310,12 @@ export async function runGatewayLoadTest(options: GatewayLoadTestOptions = {}): 
         connectionDrops += 1;
         throw error;
       }
-    }));
+    });
     sessionIds.push(...created.map((item) => item.id));
 
     const started = Date.now();
     while (Date.now() - started < sustainedSeconds * 1000) {
-      await Promise.all(sessionIds.map(async (id) => {
+      await boundedMap(sessionIds, maxParallelUnits, async (id) => {
         try {
           await requestJson(gateway.port, `/sessions/${id}/heartbeat`, { method: "POST", body: "{}" });
           heartbeatCount += 1;
@@ -303,7 +323,7 @@ export async function runGatewayLoadTest(options: GatewayLoadTestOptions = {}): 
           failedRequests += 1;
           connectionDrops += 1;
         }
-      }));
+      });
       rssSamples.push(process.memoryUsage().rss);
       await new Promise((resolve) => setTimeout(resolve, heartbeatIntervalMs));
     }
@@ -320,14 +340,14 @@ export async function runGatewayLoadTest(options: GatewayLoadTestOptions = {}): 
     if (!heartbeatTimeoutPassed) blockers.push("stale heartbeat probe did not transition to stale");
     await requestJson(gateway.port, `/sessions/${staleProbe.id}`, { method: "DELETE" }).catch(() => undefined);
 
-    await Promise.all(sessionIds.map(async (id) => {
+    await boundedMap(sessionIds, maxParallelUnits, async (id) => {
       try {
         await requestJson(gateway.port, `/sessions/${id}`, { method: "DELETE" });
         teardownCount += 1;
       } catch {
         failedRequests += 1;
       }
-    }));
+    });
 
     const listed = await requestJson<{ sessions: SessionRecord[] }>(gateway.port, "/sessions");
     const activeSessionsAfterTeardown = listed.sessions.filter((session) => session.status === "active").length;

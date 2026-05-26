@@ -1,14 +1,30 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { execSync, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const root = join(__dirname, "..", "..");
 const cliPath = join(__dirname, "..", "..", "dist", "cli", "cli.js");
+const cliSourcePath = join(root, "src", "cli", "cli.ts");
+const packagePath = join(root, "package.json");
+const distPackagePath = join(root, "dist", "package.json");
 
 describe("workflow stop CLI", () => {
+  it("built CLI reports the package version", () => {
+    const pkg = JSON.parse(readFileSync(packagePath, "utf-8"));
+    assert.ok(existsSync(distPackagePath), "Build should copy package.json into dist");
+
+    const output = execFileSync("node", [cliPath, "version"], { encoding: "utf-8" }).trim();
+
+    assert.equal(output, `antfarm v${pkg.version}`);
+  });
+
   it("help text includes 'workflow stop' command", () => {
     // Running with no args prints usage to stdout and exits with code 1
     let output: string;
@@ -65,6 +81,71 @@ describe("workflow stop CLI", () => {
         (err.stderr ?? "").length > 0,
         "Should print error to stderr",
       );
+    }
+  });
+});
+
+describe("CLI bootstrap", () => {
+  it("checks node:sqlite before loading sqlite-dependent command modules", () => {
+    const source = readFileSync(cliSourcePath, "utf-8");
+    const sqliteCheck = source.indexOf('await import("node:sqlite")');
+    const commandImport = source.indexOf('await import("./cli-main.js")');
+
+    assert.ok(sqliteCheck !== -1, "bootstrap should check node:sqlite availability");
+    assert.ok(commandImport !== -1, "bootstrap should dynamically import the command implementation");
+    assert.ok(sqliteCheck < commandImport, "node:sqlite check should happen before command implementation import");
+    assert.equal(
+      /^\s*import\s/m.test(source),
+      false,
+      "bootstrap should not have static imports that can evaluate before the runtime check",
+    );
+  });
+});
+
+describe("logs CLI", () => {
+  it("resolves #N run selectors before generic run-id matching", () => {
+    const home = mkdtempSync(join(tmpdir(), "antfarm-cli-logs-"));
+    try {
+      const antfarmDir = join(home, ".openclaw", "antfarm");
+      mkdirSync(antfarmDir, { recursive: true });
+
+      const runId = "run-logs-selector-test";
+      const now = new Date("2026-05-26T12:00:00.000Z").toISOString();
+      const db = new DatabaseSync(join(antfarmDir, "antfarm.db"));
+      try {
+        db.exec(`
+          CREATE TABLE runs (
+            id TEXT PRIMARY KEY,
+            run_number INTEGER,
+            workflow_id TEXT NOT NULL,
+            task TEXT NOT NULL,
+            status TEXT NOT NULL,
+            context TEXT NOT NULL DEFAULT '{}',
+            notify_url TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        `);
+        db.prepare(
+          "INSERT INTO runs (id, run_number, workflow_id, task, status, context, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '{}', ?, ?)"
+        ).run(runId, 3, "test-workflow", "test task", "running", now, now);
+      } finally {
+        db.close();
+      }
+
+      writeFileSync(
+        join(antfarmDir, "events.jsonl"),
+        JSON.stringify({ ts: now, event: "run.started", runId, workflowId: "test-workflow" }) + "\n",
+      );
+
+      const output = execFileSync("node", [cliPath, "logs", "#3"], {
+        encoding: "utf-8",
+        env: { ...process.env, HOME: home },
+      });
+      assert.ok(output.includes("Run started"), output);
+      assert.ok(!output.includes('No events found for run matching "#3"'), output);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

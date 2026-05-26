@@ -22,6 +22,17 @@ function resolveAgentDir(agentId: string): string {
   return path.join(resolveOpenClawStateDir(), "agents", safeId, "agent");
 }
 
+function resolveContainedPath(root: string, unsafePath: string, label: string): string {
+  const resolvedRoot = path.resolve(root);
+  const resolvedPath = path.resolve(resolvedRoot, unsafePath);
+  const relative = path.relative(resolvedRoot, resolvedPath);
+  const escapesRoot = relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+  if (!escapesRoot) {
+    return resolvedPath;
+  }
+  throw new Error(`${label} escapes managed workspace root: ${unsafePath}`);
+}
+
 async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
 }
@@ -31,7 +42,16 @@ function resolveWorkspaceDir(params: {
   agent: WorkflowAgent;
 }): string {
   const baseDir = params.agent.workspace.baseDir?.trim() || params.agent.id;
-  return path.join(resolveAgentWorkspaceRoot(), params.workflowId, baseDir);
+  const workflowWorkspaceDir = resolveContainedPath(
+    resolveAgentWorkspaceRoot(),
+    params.workflowId,
+    `Workflow "${params.workflowId}" workspace`,
+  );
+  return resolveContainedPath(
+    workflowWorkspaceDir,
+    baseDir,
+    `Workspace baseDir for agent "${params.agent.id}"`,
+  );
 }
 
 export async function provisionAgents(params: {
@@ -71,7 +91,11 @@ export async function provisionAgents(params: {
           throw new Error(`Missing bootstrap file for agent "${agent.id}": ${relativePath}`);
         }
       }
-      const destination = path.join(workspaceDir, fileName);
+      const destination = resolveContainedPath(
+        workspaceDir,
+        fileName,
+        `Workspace file for agent "${agent.id}"`,
+      );
       await writeWorkflowFile({ destination, source, overwrite });
     }
 
@@ -146,7 +170,11 @@ async function installExternalSkills(workflow: WorkflowSpec): Promise<void> {
         console.warn(`[antfarm] Skill "${skillName}" not found for agent "${agent.id}", skipping`);
         continue;
       }
-      const destination = path.join(skillsDir, skillName);
+      const destination = resolveContainedPath(
+        skillsDir,
+        skillName,
+        `Skill "${skillName}" for agent "${agent.id}"`,
+      );
       await fs.rm(destination, { recursive: true, force: true });
       await fs.cp(source, destination, { recursive: true });
     }
