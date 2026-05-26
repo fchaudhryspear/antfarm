@@ -1,6 +1,6 @@
 # Agent Swarm 3 User Manual
 
-Last updated: 2026-05-25
+Last updated: 2026-05-26
 Audience: operators, tenant onboarding owners, factory reviewers, and OpenClaw/Hermes installers
 
 This is internal operational documentation. It is not legal, compliance, financial, or customer-facing advice, and it does not certify that any tenant or deployment satisfies a regulatory framework. Operators must use the referenced runbooks, approvals, evidence packets, and counsel/compliance review where required before relying on these controls for customer, regulatory, or external commitments.
@@ -35,7 +35,7 @@ Use the GitHub bundle as the source of truth for RFC text, migrations, evidence 
 
 ## Current v3.1 Posture
 
-The v3.1 design and evidence packet is frozen for review. It is not just an RFC upload. A complete setup requires:
+The v3.1 design and evidence packet is frozen for review, and the Antfarm `main` branch now includes the install-contract fixes from PR `#16` (`9595962`). It is not just an RFC upload. A complete setup requires:
 
 - RFC and acceptance model.
 - v3.0 and v3.1 migration scripts.
@@ -48,6 +48,7 @@ The v3.1 design and evidence packet is frozen for review. It is not just an RFC 
 - Dashboard/operator isolation behavior.
 - Runtime activation runbook.
 - A meta-installation path tying OpenClaw, Antfarm, and Hermes together.
+- Installer-compatible bundled workflow contracts for the Agent Swarm and smoke-test workflows.
 
 Treat v3.1 as a release candidate for factory setup. Treat v3.2 as the follow-on operational validation and tenant onboarding phase unless the project plan says otherwise.
 
@@ -137,6 +138,23 @@ Install all bundled workflows:
 ```bash
 node ~/.openclaw/workspace/antfarm/dist/cli/cli.js install
 ```
+
+The current reviewed mainline install should report all 10 bundled workflows as installed:
+
+```text
+pipeline-orchestrator
+smoke-test-s3-v1
+smoke-test-v1
+swarm-architecture-v1
+swarm-code-fix-v1
+swarm-code-review-v3
+swarm-implement-v1
+swarm-qa-v1
+swarm-release-v1
+swarm-requirements-v1
+```
+
+If any bundled workflow fails installation because of missing workflow `id`, `agents`, agent prompt files, `expects`, or unsupported role names, stop and update from GitHub `main` before using that host as a v3.1 setup target.
 
 Install a specific workflow:
 

@@ -4,6 +4,18 @@ This directory is the canonical home for Antfarm v3.1 Multi-Tenant Software Fact
 
 Desktop, Downloads, chat attachment, and copied reviewer files are non-canonical unless copied back here and recorded in `HASHES.md`.
 
+This is internal operational documentation. It is not legal, compliance, financial, or customer-facing advice, and it does not certify that any tenant or deployment satisfies a regulatory framework. Operators must use the referenced runbooks, approvals, evidence packets, and counsel/compliance review where required before relying on these controls for customer, regulatory, or external commitments.
+
+## Current Mainline Install Status
+
+As of PR `#16` (`9595962`), Antfarm `main` includes the v3.1 install-contract fixes required for a fresh OpenClaw/Hermes host:
+
+- `pipeline-orchestrator` uses installer-supported agent roles.
+- `smoke-test-v1` and `smoke-test-s3-v1` include workflow IDs, agent definitions, agent prompt files, and explicit step `expects` contracts.
+- A clean build validates the affected workflows and installs all 10 bundled workflows.
+
+This status is an internal operational readiness statement for the documented setup path only. It is not a statement that any tenant deployment is compliant, externally certified, or production-ready for all use cases.
+
 ## Core Artifacts
 
 - `INSTALL.md` - meta-installation guide for setting up v3.1 on a fresh OpenClaw/Hermes host.

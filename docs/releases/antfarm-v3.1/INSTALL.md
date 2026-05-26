@@ -7,6 +7,8 @@ The release is not just the RFC. It includes runtime code, SQL migrations,
 tenant policy configuration, validation checks, Obsidian vault routing, Day2
 Ops integration contracts, and evidence packets.
 
+This is internal operational documentation. It is not legal, compliance, financial, or customer-facing advice, and it does not certify that any tenant or deployment satisfies a regulatory framework. Operators must use the referenced runbooks, approvals, evidence packets, and counsel/compliance review where required before relying on these controls for customer, regulatory, or external commitments.
+
 ## Scope
 
 This repository owns the Antfarm runtime pieces:
@@ -51,8 +53,27 @@ release pack is the Antfarm source of truth for v3.1.
 
    ```bash
    npm run build
-   ./bin/antfarm install
+   node dist/cli/cli.js install
+   node dist/cli/cli.js workflow list
    ```
+
+   The current reviewed mainline should install these bundled workflows:
+
+   ```text
+   pipeline-orchestrator
+   smoke-test-s3-v1
+   smoke-test-v1
+   swarm-architecture-v1
+   swarm-code-fix-v1
+   swarm-code-review-v3
+   swarm-implement-v1
+   swarm-qa-v1
+   swarm-release-v1
+   swarm-requirements-v1
+   ```
+
+   If install fails on bundled workflow contract errors, update to Antfarm
+   `main` at or after PR `#16` (`9595962`) before continuing.
 
 3. Back up the Antfarm database before schema changes.
 
@@ -138,6 +159,10 @@ The v3.1 closure evidence proves a documented/design freeze and minimal runtime
 proof. It does not prove broad tenant production operations on a new host.
 Operational validation and tenant onboarding continue in v3.2.
 
+The successful bundled workflow install confirms only the Antfarm workflow
+package contract on the host. It does not approve tenant-specific production
+activation, vault sync, RTBF handling, customer reliance, or compliance claims.
+
 ## Rollback
 
 Rollback is operator-controlled:
@@ -147,4 +172,3 @@ Rollback is operator-controlled:
 3. Apply `migrations/004_v31_rollback.sql` only after reviewed approval.
 4. Restore the pre-v3.1 database backup if rollback SQL is insufficient.
 5. Record the rollback decision, actor, database hash, and post-rollback checks.
-
