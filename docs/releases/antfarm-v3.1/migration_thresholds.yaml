@@ -1,0 +1,10 @@
+version: antfarm-v3.1
+legacy_unclassified:
+  default_max_percent: 5
+  block_on_exceed: true
+  evidence_required:
+    - total_rows
+    - legacy_unclassified_rows
+    - percentage
+    - sample_row_ids
+    - operator_decision_if_exceeded

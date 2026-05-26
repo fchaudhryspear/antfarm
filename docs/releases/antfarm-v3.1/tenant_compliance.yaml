@@ -1,0 +1,155 @@
+# Antfarm v3.1 tenant compliance source-of-truth candidate.
+# Runtime owner: Antfarm config repo. This file is the Phase A/B evidence copy.
+version: antfarm-v3.1
+generated_at: "2026-05-25"
+day2_ops:
+  status: planned_pending
+  pre_live_resolution: faisal
+  activation_gate: day2-ops-interface-and-activation-gate.md
+  audit_retention_days: 90
+  audit_excluded_event_types:
+    - incident_response_taken
+    - incident_response_reversed
+  retention_preserving_event_chains:
+    - incident_workflow
+    - rtbf_workflow
+    - compliance_audit_chain
+authority_classes:
+  faisal: founder
+  day2_ops: operator
+  simon: operator
+minimum_authority:
+  production_touching:
+    finance: founder
+    pii: founder
+    default: operator
+  schema_changes:
+    "*": founder
+  security_changes:
+    "*": founder
+  tenant_data_access:
+    pii: founder
+  rtbf_requests:
+    finance: founder
+    pii: founder
+  routine_fixes:
+    "*": operator
+  audit_log_access:
+    "*": operator
+  model_registry_update:
+    "*": founder
+  promotion_review:
+    finance: founder
+    pii: founder
+    default: operator
+  incident_response:
+    "*": operator
+  tenant_lifecycle:
+    "*": founder
+incident_response_preauthorized:
+  - id: rollback_failed_deploy
+    requires_evidence: smoke_test_failure_record
+  - id: restart_hung_worker
+    requires_evidence: worker_health_check_failure
+  - id: pause_workflow_run
+    requires_evidence: operator_judgment
+  - id: disable_failing_work_unit
+    requires_evidence: error_threshold_record
+  - id: restore_antfarm_snapshot
+    requires_evidence: corruption_evidence
+tenants:
+  flobase:
+    display_name: Flobase
+    compliance_class: finance
+    pii_data_location: factory-sensitive/flobase
+    redaction_ruleset: finance_v1
+    rtbf_subject_persistence: option_a
+    rtbf_reversible_window_days: 90
+    approvers: &finance_approvers
+      production_touching: [faisal]
+      schema_changes: [faisal]
+      security_changes: [faisal, simon]
+      routine_fixes: [day2_ops, faisal]
+      audit_log_access: [faisal, day2_ops]
+      rtbf_requests: [faisal]
+      promotion_review: [faisal]
+    approval_timeout_hours: 4
+    fallback_chain: [faisal]
+    vault_route:
+      shared: true
+      sensitive_subtree: flobase
+      no_fallback: true
+  credologi:
+    display_name: Credologi
+    compliance_class: finance
+    pii_data_location: factory-sensitive/credologi
+    redaction_ruleset: finance_v1
+    rtbf_subject_persistence: option_a
+    rtbf_reversible_window_days: 90
+    approvers: *finance_approvers
+    approval_timeout_hours: 4
+    fallback_chain: [faisal]
+    vault_route:
+      shared: true
+      sensitive_subtree: credologi
+      no_fallback: true
+  utility_valet:
+    display_name: Utility Valet
+    compliance_class: default
+    pii_data_location: zoho
+    redaction_ruleset: default_v1
+    rtbf_subject_persistence: option_a
+    rtbf_reversible_window_days: 30
+    approvers: &default_approvers
+      production_touching: [day2_ops, faisal]
+      schema_changes: [faisal]
+      security_changes: [faisal, simon]
+      routine_fixes: [day2_ops, faisal]
+      audit_log_access: [faisal, day2_ops]
+      promotion_review: [day2_ops, faisal]
+    approval_timeout_hours: 4
+    fallback_chain: [faisal]
+    vault_route:
+      shared: true
+      sensitive_subtree: null
+      no_fallback: false
+  spearhead:
+    display_name: Spearhead
+    compliance_class: default
+    pii_data_location: none
+    redaction_ruleset: default_v1
+    rtbf_subject_persistence: option_a
+    rtbf_reversible_window_days: 30
+    approvers: *default_approvers
+    approval_timeout_hours: 4
+    fallback_chain: [faisal]
+    vault_route: { shared: true, sensitive_subtree: null, no_fallback: false }
+  fcrp_capital:
+    display_name: FCRP Capital
+    compliance_class: default
+    pii_data_location: none
+    redaction_ruleset: default_v1
+    rtbf_subject_persistence: option_a
+    rtbf_reversible_window_days: 30
+    approvers: *default_approvers
+    approval_timeout_hours: 4
+    fallback_chain: [faisal]
+    vault_route: { shared: true, sensitive_subtree: null, no_fallback: false }
+  starship_residential:
+    display_name: Starship Residential
+    compliance_class: default
+    pii_data_location: none
+    redaction_ruleset: default_v1
+    rtbf_subject_persistence: option_a
+    rtbf_reversible_window_days: 30
+    approvers: *default_approvers
+    approval_timeout_hours: 4
+    fallback_chain: [faisal]
+    vault_route: { shared: true, sensitive_subtree: null, no_fallback: false }
+future_placeholders:
+  future_pii_tenant:
+    compliance_class: pii
+    redaction_ruleset: pii_v1
+    rtbf_subject_persistence: option_b
+    rtbf_reversible_window_days: 14
+    status: placeholder_only

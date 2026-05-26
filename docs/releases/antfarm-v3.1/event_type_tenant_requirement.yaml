@@ -1,0 +1,26 @@
+# Deny-by-default event type tenant requirement matrix for audit_global tables.
+version: antfarm-v3.1
+default: deny
+requirements:
+  runtime_started: system_only
+  runtime_stopped: system_only
+  config_reload: system_only
+  config_sync: system_only
+  migration_checkpoint: system_only
+  retention_sweep_summary: system_only
+  retention_sweep_deletion: system_only
+  dashboard_session_created: tenant_optional
+  dashboard_session_revoked: tenant_optional
+  dashboard_scope_denied: tenant_optional
+  approval_requested: tenant_required
+  approval_granted: tenant_required
+  approval_denied: tenant_required
+  incident_response_taken: tenant_required
+  incident_response_reversed: tenant_required
+  rtbf_state_transition: tenant_required
+  legacy_unclassified: tenant_optional
+fresh_insert_forbidden:
+  - legacy_unclassified
+notes:
+  - factory_events is tenant_scoped and must not receive system-only event types.
+  - Unknown event types fail closed until added by founder/security-approved config change.

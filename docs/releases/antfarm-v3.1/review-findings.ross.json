@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0.0",
+  "produced_at": "2026-05-25T10:45:00Z",
+  "produced_by": {
+    "kind": "agent",
+    "id": "ross",
+    "display_name": "Ross"
+  },
+  "target": {
+    "kind": "rfc",
+    "ref": "/Users/faisalshomemacmini/.openclaw/antfarm/workflows/antfarm-v3.1/RFC-antfarm-v3.1.md",
+    "revision": "v0.15-md5-6adf05fd0d267ac9ff9d092e47a9f46d"
+  },
+  "findings": [
+    {
+      "id": "ross-001",
+      "anchor": {
+        "file": "RFC-antfarm-v3.1.md",
+        "line_range": [1335, 1335],
+        "section": "14 Decision Checklist"
+      },
+      "severity": "medium",
+      "category": "ambiguous",
+      "summary": "Runtime activation gate is checked off while runtime evidence says it is still dormant",
+      "detail": "The checklist marks §4 prereq #6 as complete, but the same RFC says the antfarm execution runtime is dormant and Phase C must pause until a factory_items -> factory_runs -> factory_events evidence chain exists. This creates a review-gate ambiguity: a reader can treat the prerequisite as signed off even though the operational evidence is explicitly absent.",
+      "operational_impact": "Phase C or gate-evidence tracking could advance on a prose-only checklist checkmark instead of live ledger evidence.",
+      "recommended_fix": "Change the checklist item from checked to pending/blocked, or split it into two rows: design gate defined is complete; runtime activation evidence remains blocked by ADP-404/ADP-410 until the live ledger chain exists.",
+      "blocks_freeze": true,
+      "confidence": "certain",
+      "status": "open",
+      "proposed_change": "Update §14 so runtime activation evidence cannot be interpreted as complete until the live evidence chain exists.",
+      "cross_cutting": true,
+      "related_sections": ["§4", "§12 Phase C", "§13 Q11", "§14"],
+      "evidence": [
+        "RFC line 1254 requires an end-to-end workflow recorded in factory_items -> factory_runs -> factory_events before Phase C begins.",
+        "RFC line 1328 says the runtime is dormant as of 2026-05-24.",
+        "RFC line 1335 is checked despite that evidence gap."
+      ]
+    },
+    {
+      "id": "ross-002",
+      "anchor": {
+        "file": "RFC-antfarm-v3.1.md",
+        "line_range": [1314, 1325],
+        "section": "12.1 v3.1 / v3.2 boundary and 13 Open Questions"
+      },
+      "severity": "medium",
+      "category": "ambiguous",
+      "summary": "Cross-tenant search is both deferred and enabled in v3.1",
+      "detail": "The v3.1/v3.2 boundary table says cross-tenant federated search is not in v3.1 and only possible later, while Q8 says cross-tenant ledger search is enabled for founder authority through the §9.2 show-all toggle. The intended distinction appears to be broad federated content search versus metadata-only ledger search, but the RFC uses near-identical wording without a hard boundary.",
+      "operational_impact": "Dashboard/API implementation could either omit the founder show-all ledger view or overbuild broader cross-tenant content search that the compliance model intended to defer.",
+      "recommended_fix": "Rename the v3.1 feature to 'cross-tenant ledger metadata view' and reserve 'cross-tenant federated content search' for v3.2+. Update §12.1, §13 Q8, and §14 to use those distinct names consistently.",
+      "blocks_freeze": true,
+      "confidence": "certain",
+      "status": "open",
+      "proposed_change": "Clarify the boundary table and Q8 wording so metadata-only ledger aggregation is allowed in v3.1 while vault/context/content federated search remains deferred.",
+      "cross_cutting": true,
+      "related_sections": ["§9.2", "§12.1", "§13 Q8", "§14 Dashboard"],
+      "evidence": [
+        "RFC line 995 defines a show-all toggle for Faisal across the auth scope.",
+        "RFC line 1314 says cross-tenant federated search is not in v3.1.",
+        "RFC line 1325 says cross-tenant ledger search is enabled."
+      ]
+    },
+    {
+      "id": "ross-003",
+      "anchor": {
+        "file": "RFC-antfarm-v3.1.md",
+        "line_range": [700, 1060],
+        "section": "7.3 Day2 Ops slot and 10.3 Day2 Ops activation gate"
+      },
+      "severity": "medium",
+      "category": "ambiguous",
+      "summary": "Day2 Ops timing still says 1-2 weeks despite the planned-but-pending posture",
+      "detail": "Several current-body lines still say Day2 Ops goes live in 1-2 weeks or is targeted for Phase A/B, while the resolved posture elsewhere says Day2 Ops can be delayed and is not a Phase B exit blocker. This is the same stale-timing class the v0.10 changelog says was corrected, but it remains in body text.",
+      "operational_impact": "Implementation planning and gate evidence could treat Day2 Ops live activation as schedule-certain rather than opportunistic, creating false blockers or premature dependency assumptions.",
+      "recommended_fix": "Replace 'goes live in 1-2 weeks' / 'targeted for Phase A/B' body claims with 'planned-but-pending; activation occurs only when §10.3 criteria are met; Phase B falls back to Faisal.'",
+      "blocks_freeze": true,
+      "confidence": "certain",
+      "status": "open",
+      "proposed_change": "Sweep §7.3, §9.3, §10 intro, and §12 Day2 Ops timing text for the planned-but-pending phrasing already used in the summary and Q10 resolution.",
+      "cross_cutting": true,
+      "related_sections": ["§1", "§7.3", "§9.3", "§10", "§12", "§13 Q10"],
+      "evidence": [
+        "RFC line 700 says Day2 Ops goes live in 1-2 weeks.",
+        "RFC line 1027 says Day2 Ops goes live in 1-2 weeks.",
+        "RFC line 1060 says work continues with Faisal as sole approver if Day2 Ops is not live by Phase E."
+      ]
+    }
+  ]
+}

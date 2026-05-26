@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "factory_item": {
+    "id": "adp410_item_1779706914585",
+    "title": "Controlled Flobase v3.1 runtime proof",
+    "description": "Flobase scoped runtime proof with [REDACTED_ACCOUNT_NUMBER] [REDACTED_ROUTING_NUMBER] redacted in context pack",
+    "repo": "antfarm",
+    "issue_url": "https://linear.app/fasoc/issue/ADP-410",
+    "priority": "P1",
+    "lifecycle_stage": "execution"
+  },
+  "factory_run_id": "adp410_run_1779706914585",
+  "workflow_id": "antfarm-v3.1-controlled-flobase-proof",
+  "stage": "execution",
+  "agent_role": "backend_runtime",
+  "task": "Run Flobase scoped transaction-path workflow with [REDACTED_ACCOUNT_NUMBER] [REDACTED_ROUTING_NUMBER] [REDACTED_TRANSACTION_ID]",
+  "repo_path": null,
+  "constraints": {},
+  "sources": [],
+  "prior_artifacts": [],
+  "redaction_ruleset_version": "finance_v1",
+  "redactions": [
+    "account_number",
+    "routing_number",
+    "transaction_id"
+  ],
+  "pack_checksum": "d0d2599de96208aba8b8ece01934f5af78d28dfe3849103eadcf785667b1ff2a"
+}

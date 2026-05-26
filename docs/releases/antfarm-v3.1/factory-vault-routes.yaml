@@ -1,0 +1,35 @@
+# Desired v3.1 vault route projection.
+# Source of truth remains tenant_compliance.yaml; this file is an operator-readable mirror for ADP-414.
+version: antfarm-v3.1
+shared_vault_path: "/Users/faisalshomemacmini/.openclaw/Obsidian Vault/factory-shared"
+sensitive_vault_path: "/Users/faisalshomemacmini/.openclaw/Obsidian Vault/factory-sensitive"
+no_fallback_for_sensitive_classes: true
+tenants:
+  flobase:
+    compliance_class: finance
+    readable_roots:
+      - factory-shared
+      - factory-sensitive/flobase
+  credologi:
+    compliance_class: finance
+    readable_roots:
+      - factory-shared
+      - factory-sensitive/credologi
+  utility_valet:
+    compliance_class: default
+    condition: "PII remains in Zoho and is not ingested into the factory."
+    readable_roots:
+      - factory-shared
+  spearhead:
+    compliance_class: default
+    readable_roots:
+      - factory-shared
+  fcrp_capital:
+    compliance_class: default
+    condition: "Must be explicitly elevated by Faisal before finance-class routing applies."
+    readable_roots:
+      - factory-shared
+  starship_residential:
+    compliance_class: default
+    readable_roots:
+      - factory-shared
