@@ -135,6 +135,9 @@ The Antfarm v3.1 Multi-Tenant Software Factory release pack is checked in at
 [INSTALL.md](docs/releases/antfarm-v3.1/INSTALL.md) when setting up v3.1 on a
 fresh OpenClaw/Hermes host.
 
+For Agent Swarm 3 / Antfarm v3.1 factory setup and operation, see
+[docs/agent-swarm-3-user-manual.md](docs/agent-swarm-3-user-manual.md).
+
 ---
 
 ## Security
