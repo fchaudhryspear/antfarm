@@ -778,16 +778,14 @@ export function peekStep(agentId: string): PeekResult {
  * Check if an agent has any steps currently in 'running' state (actively being worked on).
  * Used by cron dispatcher to detect if a step was already claimed by another cron instance.
  *
- * Issue #342: Only block on 'running' steps that are actively producing output.
+ * Issue #342: Block on running steps. Recovery is handled by cleanupAbandonedSteps(),
+ * which applies per-step and per-role timeouts.
  * - 'done' steps never block — they're finished.
  * - 'pending' steps never block — they need to be claimed.
- * - 'running' steps with stale sessions (no output in STALE_SESSION_THRESHOLD_MS)
- *   are reset to 'pending' and don't block.
+ * - 'running' steps block until the configured abandonment timeout has elapsed.
  *
  * Returns 'running' (actively in-progress), or 'none' (safe to claim).
  */
-const STALE_SESSION_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes — no output = stale
-
 // ── Idle tick auto-disable ──────────────────────────────────────────
 // When a cron polls and gets NO_WORK repeatedly, we track idle ticks.
 // After MAX_IDLE_TICKS consecutive NO_WORK results, the cron is disabled
@@ -868,34 +866,15 @@ export function getStepStatus(agentId: string): string {
   const db = getDb();
 
   // Find running steps for this agent in active runs
-  const runningSteps = db.prepare(
-    `SELECT s.id, s.step_id, s.run_id, s.last_output_at, s.updated_at,
-            (julianday('now') - julianday(COALESCE(s.last_output_at, s.updated_at))) * 86400000 AS idle_ms
+  const row = db.prepare(
+    `SELECT COUNT(*) AS cnt
      FROM steps s
      JOIN runs r ON r.id = s.run_id
      WHERE s.agent_id = ? AND s.status = 'running'
        AND r.status = 'running'`
-  ).all(agentId) as Array<{ id: string; step_id: string; run_id: string; last_output_at: string | null; updated_at: string; idle_ms: number }>;
+  ).get(agentId) as { cnt: number };
 
-  if (runningSteps.length === 0) return "none";
-
-  // Check each running step — only block if actively producing output
-  for (const step of runningSteps) {
-    if (step.idle_ms < STALE_SESSION_THRESHOLD_MS) {
-      // Step is active — block the claim
-      return "running";
-    }
-
-    // Step is stale (no output in 3 min) — reset to pending for re-claim
-    db.prepare(
-      "UPDATE steps SET status = 'pending', updated_at = datetime('now') WHERE id = ? AND status = 'running'"
-    ).run(step.id);
-    logger.info(`Stale session detected: step "${step.step_id}" idle for ${Math.round(step.idle_ms / 1000)}s — reset to pending`, { runId: step.run_id, stepId: step.step_id });
-    emitEvent({ ts: new Date().toISOString(), event: "step.pending", runId: step.run_id, workflowId: getWorkflowId(step.run_id), stepId: step.step_id, detail: `Stale session reset: idle ${Math.round(step.idle_ms / 60000)}min` });
-  }
-
-  // All running steps were stale — safe to claim
-  return "none";
+  return row.cnt > 0 ? "running" : "none";
 }
 
 // ── Claim ───────────────────────────────────────────────────────────

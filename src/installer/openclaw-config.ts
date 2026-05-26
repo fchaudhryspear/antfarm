@@ -3,6 +3,14 @@ import JSON5 from "json5";
 import { resolveOpenClawConfigPath } from "./paths.js";
 
 export type OpenClawConfig = {
+  gateway?: {
+    port?: number;
+    auth?: {
+      mode?: "token" | "password";
+      token?: string;
+      password?: string;
+    };
+  };
   cron?: {
     sessionRetention?: string | false;
   };

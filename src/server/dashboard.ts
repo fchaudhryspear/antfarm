@@ -17,6 +17,7 @@ import {
 } from "../factory/store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
 
 interface WorkflowDef {
   id: string;
@@ -137,7 +138,7 @@ export function getFactoryDashboardSnapshot(db = getDb()) {
 }
 
 function json(res: http.ServerResponse, data: unknown, status = 200) {
-  res.writeHead(status, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+  res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
 }
 
@@ -150,7 +151,7 @@ function serveHTML(res: http.ServerResponse) {
   res.end(fs.readFileSync(filePath, "utf-8"));
 }
 
-export function startDashboard(port = 3333): http.Server {
+export function startDashboard(port = 3333, host = DEFAULT_DASHBOARD_HOST): http.Server {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
     const p = url.pathname;
@@ -205,7 +206,7 @@ export function startDashboard(port = 3333): http.Server {
       const srcFontPath = path.resolve(__dirname, "..", "..", "src", "..", "assets", "fonts", fontName);
       const resolvedFont = fs.existsSync(fontPath) ? fontPath : srcFontPath;
       if (fs.existsSync(resolvedFont)) {
-        res.writeHead(200, { "Content-Type": "font/woff2", "Cache-Control": "public, max-age=31536000", "Access-Control-Allow-Origin": "*" });
+        res.writeHead(200, { "Content-Type": "font/woff2", "Cache-Control": "public, max-age=31536000" });
         return res.end(fs.readFileSync(resolvedFont));
       }
     }
@@ -225,8 +226,8 @@ export function startDashboard(port = 3333): http.Server {
     serveHTML(res);
   });
 
-  server.listen(port, () => {
-    console.log(`Antfarm Dashboard: http://localhost:${port}`);
+  server.listen(port, host, () => {
+    console.log(`Antfarm Dashboard: http://${host}:${port}`);
   });
 
   return server;

@@ -14,6 +14,10 @@ export function getLogFile(): string {
   return path.join(os.homedir(), ".openclaw", "antfarm", "dashboard.log");
 }
 
+function getLockFile(): string {
+  return path.join(os.homedir(), ".openclaw", "antfarm", "dashboard.start.lock");
+}
+
 export function isRunning(): { running: true; pid: number } | { running: false } {
   const pidFile = getPidFile();
   if (!fs.existsSync(pidFile)) return { running: false };
@@ -36,6 +40,28 @@ function readPidFile(): number | null {
   return isNaN(pid) ? null : pid;
 }
 
+function closeFd(fd: number | null): null {
+  if (fd !== null) {
+    fs.closeSync(fd);
+  }
+  return null;
+}
+
+async function acquireStartLock(): Promise<number> {
+  const lockFile = getLockFile();
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {
+      return fs.openSync(lockFile, "wx");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  try { fs.unlinkSync(lockFile); } catch {}
+  return fs.openSync(lockFile, "wx");
+}
+
 export async function startDaemon(port = 3333): Promise<{ pid: number; port: number }> {
   const status = isRunning();
   if (status.running) {
@@ -46,52 +72,71 @@ export async function startDaemon(port = 3333): Promise<{ pid: number; port: num
   const pidDir = path.dirname(getPidFile());
   fs.mkdirSync(pidDir, { recursive: true });
 
-  const out = fs.openSync(logFile, "a");
-  const err = fs.openSync(logFile, "a");
+  const lockFd = await acquireStartLock();
+  try {
+    const lockedStatus = isRunning();
+    if (lockedStatus.running) {
+      return { pid: lockedStatus.pid, port };
+    }
 
-  const daemonScript = path.resolve(__dirname, "daemon.js");
-  const child = spawn("node", [daemonScript, String(port)], {
-    detached: true,
-    stdio: ["ignore", out, err],
-  });
-  child.unref();
+    let out: number | null = null;
+    let err: number | null = null;
+    let child;
+    try {
+      out = fs.openSync(logFile, "a");
+      err = fs.openSync(logFile, "a");
 
-  let startupFailure: Error | null = null;
-  const onError = (error: Error) => {
-    startupFailure = error;
-  };
-  const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-    startupFailure = new Error(`Daemon exited during startup (${signal ?? code ?? "unknown"}). Check ${logFile}`);
-  };
-  child.once("error", onError);
-  child.once("exit", onExit);
+      const daemonScript = path.resolve(__dirname, "daemon.js");
+      child = spawn("node", [daemonScript, String(port)], {
+        detached: true,
+        stdio: ["ignore", out, err],
+      });
+    } finally {
+      err = closeFd(err);
+      out = closeFd(out);
+    }
+    child.unref();
 
-  // Wait 1s then confirm
-  await new Promise((r) => setTimeout(r, 1000));
-  child.off("error", onError);
-  child.off("exit", onExit);
+    let startupFailure: Error | null = null;
+    const onError = (error: Error) => {
+      startupFailure = error;
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      startupFailure = new Error(`Daemon exited during startup (${signal ?? code ?? "unknown"}). Check ${logFile}`);
+    };
+    child.once("error", onError);
+    child.once("exit", onExit);
 
-  if (startupFailure) {
+    // Wait 1s then confirm
+    await new Promise((r) => setTimeout(r, 1000));
+    child.off("error", onError);
+    child.off("exit", onExit);
+
+    if (startupFailure) {
+      const pid = readPidFile();
+      if (child.pid && pid === child.pid) {
+        try { fs.unlinkSync(getPidFile()); } catch {}
+      }
+      throw startupFailure;
+    }
+
     const pid = readPidFile();
-    if (child.pid && pid === child.pid) {
-      try { fs.unlinkSync(getPidFile()); } catch {}
+    if (!child.pid || pid !== child.pid) {
+      if (pid !== null) {
+        try { fs.unlinkSync(getPidFile()); } catch {}
+      }
+      throw new Error("Daemon failed to start. Check " + logFile);
     }
-    throw startupFailure;
-  }
 
-  const pid = readPidFile();
-  if (!child.pid || pid !== child.pid) {
-    if (pid !== null) {
-      try { fs.unlinkSync(getPidFile()); } catch {}
+    const check = isRunning();
+    if (!check.running) {
+      throw new Error("Daemon failed to start. Check " + logFile);
     }
-    throw new Error("Daemon failed to start. Check " + logFile);
+    return { pid: check.pid, port };
+  } finally {
+    try { fs.closeSync(lockFd); } catch {}
+    try { fs.unlinkSync(getLockFile()); } catch {}
   }
-
-  const check = isRunning();
-  if (!check.running) {
-    throw new Error("Daemon failed to start. Check " + logFile);
-  }
-  return { pid: check.pid, port };
 }
 
 export function stopDaemon(): boolean {

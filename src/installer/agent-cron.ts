@@ -1,4 +1,4 @@
-import { createAgentCronJob, deleteAgentCronJobs, listCronJobs, checkCronToolAvailable } from "./gateway-api.js";
+import { createAgentCronJob, deleteAgentCronJobByName, deleteAgentCronJobs, listCronJobs, checkCronToolAvailable } from "./gateway-api.js";
 import type { WorkflowSpec } from "./types.js";
 import { resolveAntfarmCli } from "./paths.js";
 import { getDb } from "../db.js";
@@ -310,7 +310,7 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
   for (const [cronName] of existingCrons) {
     if (!agentIds.has(cronName)) {
       log.debug(`Removing orphaned cron: ${cronName}`);
-      await deleteAgentCronJobs(cronName);
+      await deleteAgentCronJobByName(cronName);
     }
   }
 
@@ -351,7 +351,7 @@ export async function ensureWorkflowCrons(workflow: WorkflowSpec): Promise<void>
       if (needsRecreate) {
         // Model drift — delete and recreate with correct model
         log.debug(`Drift detected for "${agent.id}": model=${cronModel}->${pollingModel} delivery=${cronDelivery}->none.`, { workflowId: workflow.id, cronName });
-        await deleteAgentCronJobs(cronName);
+        await deleteAgentCronJobByName(cronName);
         const result = await createAgentCronJob({
           name: cronName,
           schedule: { kind: "every", everyMs, anchorMs },

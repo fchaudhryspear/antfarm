@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { getDb } from "../db.js";
-import { buildForcedTierOutput, claimStep, normalizeForcedTier, parseOutputKeyValues } from "./step-ops.js";
+import { buildForcedTierOutput, claimStep, getStepStatus, normalizeForcedTier, parseOutputKeyValues } from "./step-ops.js";
 import { validateContractAndDispatch } from "../validate-step-output.js";
 
 const cleanupRunIds: string[] = [];
@@ -69,6 +69,29 @@ describe("idle cron disable command", () => {
 
     assert.match(source, /execFileSync\("openclaw", \["cron", "disable", match\.id\]/);
     assert.doesNotMatch(source, /execSync\(`openclaw cron disable \$\{match\.id\}`/);
+  });
+});
+
+describe("getStepStatus", () => {
+  it("does not requeue an idle running step before its configured timeout", () => {
+    const db = getDb();
+    const runId = crypto.randomUUID();
+    const stepId = crypto.randomUUID();
+    const agentId = `test-agent-${crypto.randomUUID()}`;
+    cleanupRunIds.push(runId);
+
+    insertRun(runId);
+    db.prepare(
+      `INSERT INTO steps (
+        id, run_id, step_id, agent_id, step_index, input_template, expects, status,
+        timeout_minutes, last_output_at, created_at, updated_at
+      ) VALUES (?, ?, 'long-running', ?, 0, 'Do work', '', 'running', 30, datetime('now', '-4 minutes'), datetime('now', '-4 minutes'), datetime('now', '-4 minutes'))`
+    ).run(stepId, runId, agentId);
+
+    assert.equal(getStepStatus(agentId), "running");
+
+    const row = db.prepare("SELECT status FROM steps WHERE id = ?").get(stepId) as { status: string };
+    assert.equal(row.status, "running");
   });
 });
 

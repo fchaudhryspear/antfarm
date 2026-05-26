@@ -14,6 +14,8 @@ const root = join(__dirname, "..");
 
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const version = pkg.version;
+const rawGithubVersionUrlPattern =
+  /raw\.githubusercontent\.com\/snarktank\/antfarm\/v[^/]+\//g;
 
 // --- landing/index.html ---
 const htmlPath = join(root, "landing", "index.html");
@@ -28,7 +30,7 @@ html = html.replace(
 
 // Curl URLs: replace tagged version in raw.githubusercontent URLs
 html = html.replace(
-  /raw\.githubusercontent\.com\/snarktank\/antfarm\/v[\d.]+\//g,
+  rawGithubVersionUrlPattern,
   `raw.githubusercontent.com/snarktank/antfarm/v${version}/`
 );
 
@@ -40,7 +42,7 @@ const readmePath = join(root, "README.md");
 if (existsSync(readmePath)) {
   let readme = readFileSync(readmePath, "utf8");
   readme = readme.replace(
-    /raw\.githubusercontent\.com\/snarktank\/antfarm\/v[\d.]+\//g,
+    rawGithubVersionUrlPattern,
     `raw.githubusercontent.com/snarktank/antfarm/v${version}/`
   );
   writeFileSync(readmePath, readme, "utf8");
@@ -52,7 +54,7 @@ const installPath = join(root, "scripts", "install.sh");
 if (existsSync(installPath)) {
   let install = readFileSync(installPath, "utf8");
   install = install.replace(
-    /raw\.githubusercontent\.com\/snarktank\/antfarm\/v[\d.]+\//g,
+    rawGithubVersionUrlPattern,
     `raw.githubusercontent.com/snarktank/antfarm/v${version}/`
   );
   writeFileSync(installPath, install, "utf8");

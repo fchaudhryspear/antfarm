@@ -305,13 +305,16 @@ export async function runGatewayLoadTest(options: GatewayLoadTestOptions = {}): 
     const created = await boundedMap(Array.from({ length: targetConcurrentSessions }), maxParallelUnits, async () => {
       try {
         return await requestJson<{ id: string }>(gateway.port, "/sessions", { method: "POST", body: "{}" });
-      } catch (error) {
+      } catch {
         failedRequests += 1;
         connectionDrops += 1;
-        throw error;
+        return undefined;
       }
     });
-    sessionIds.push(...created.map((item) => item.id));
+    sessionIds.push(...created.flatMap((item) => item === undefined ? [] : [item.id]));
+    if (sessionIds.length !== targetConcurrentSessions) {
+      blockers.push(`created session count ${sessionIds.length} did not match target ${targetConcurrentSessions}`);
+    }
 
     const started = Date.now();
     while (Date.now() - started < sustainedSeconds * 1000) {

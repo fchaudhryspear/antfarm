@@ -3,13 +3,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { startDaemon, getPidFile, isRunning } from "./daemonctl.js";
+import { startDaemon, getPidFile, getLogFile, isRunning } from "./daemonctl.js";
 
 let homeDir: string | null = null;
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const originalPath = process.env.PATH;
 const originalStalePid = process.env.ANTFARM_STALE_PID;
+const originalOpenSync = fs.openSync;
+const originalCloseSync = fs.closeSync;
 
 afterEach(() => {
   if (homeDir) {
@@ -20,6 +22,8 @@ afterEach(() => {
   process.env.USERPROFILE = originalUserProfile;
   process.env.PATH = originalPath;
   process.env.ANTFARM_STALE_PID = originalStalePid;
+  fs.openSync = originalOpenSync;
+  fs.closeSync = originalCloseSync;
 });
 
 function tempHome() {
@@ -44,6 +48,25 @@ function fakeNodeThatWritesPid(pid: number) {
   process.env.ANTFARM_STALE_PID = String(pid);
 }
 
+function fakeNodeThatWritesOwnPid() {
+  assert.ok(homeDir);
+  const binDir = path.join(homeDir, "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  const fakeNode = path.join(binDir, "node");
+  fs.writeFileSync(fakeNode, [
+    "#!/bin/sh",
+    "mkdir -p \"$HOME/.openclaw/antfarm\"",
+    "count_file=\"$HOME/.openclaw/antfarm/spawn-count\"",
+    "count=0",
+    "[ -f \"$count_file\" ] && count=$(cat \"$count_file\")",
+    "printf '%s' \"$((count + 1))\" > \"$count_file\"",
+    "printf '%s' \"$$\" > \"$HOME/.openclaw/antfarm/dashboard.pid\"",
+    "sleep 2",
+  ].join("\n"));
+  fs.chmodSync(fakeNode, 0o755);
+  process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+}
+
 describe("daemon startup", () => {
   it("rejects and clears a live pid file that does not belong to the spawned child", async () => {
     tempHome();
@@ -55,5 +78,47 @@ describe("daemon startup", () => {
     );
     assert.equal(fs.existsSync(getPidFile()), false);
     assert.deepEqual(isRunning(), { running: false });
+  });
+
+  it("closes parent log descriptors when startup fails", async () => {
+    tempHome();
+    fakeNodeThatWritesPid(process.pid);
+    const openedLogFds: number[] = [];
+    const closedFds: number[] = [];
+
+    fs.openSync = ((file: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+      const fd = originalOpenSync(file, flags, mode);
+      if (String(file) === getLogFile()) {
+        openedLogFds.push(fd);
+      }
+      return fd;
+    }) as typeof fs.openSync;
+    fs.closeSync = ((fd: number) => {
+      closedFds.push(fd);
+      return originalCloseSync(fd);
+    }) as typeof fs.closeSync;
+
+    await assert.rejects(
+      () => startDaemon(3333),
+      /Daemon failed to start/
+    );
+    assert.equal(openedLogFds.length, 2);
+    assert.deepEqual(closedFds.filter((fd) => openedLogFds.includes(fd)).sort(), [...openedLogFds].sort());
+  });
+
+  it("serializes concurrent starts so a competing live pid file remains owned", async () => {
+    tempHome();
+    fakeNodeThatWritesOwnPid();
+
+    const [first, second] = await Promise.all([
+      startDaemon(3333),
+      startDaemon(3333),
+    ]);
+
+    assert.ok(homeDir);
+    const countFile = path.join(homeDir, ".openclaw", "antfarm", "spawn-count");
+    assert.equal(fs.readFileSync(countFile, "utf-8"), "1");
+    assert.equal(first.pid, second.pid);
+    assert.deepEqual(isRunning(), { running: true, pid: first.pid });
   });
 });

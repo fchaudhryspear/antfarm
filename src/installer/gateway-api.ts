@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { execFile } from "node:child_process";
+import { readOpenClawConfig } from "./openclaw-config.js";
 
 interface GatewayConfig {
   url: string;
@@ -11,16 +12,14 @@ interface GatewayConfig {
   secret?: string;
 }
 
-async function readOpenClawConfig(): Promise<{
+async function readGatewayConfig(): Promise<{
   port?: number;
   token?: string;
   authMode?: "token" | "password";
   password?: string;
 }> {
-  const configPath = path.join(os.homedir(), ".openclaw", "openclaw.json");
   try {
-    const content = await fs.readFile(configPath, "utf-8");
-    const config = JSON.parse(content);
+    const { config } = await readOpenClawConfig();
     return {
       port: config.gateway?.port,
       token: config.gateway?.auth?.token,
@@ -35,7 +34,7 @@ async function readOpenClawConfig(): Promise<{
 }
 
 async function getGatewayConfig(): Promise<GatewayConfig> {
-  const config = await readOpenClawConfig();
+  const config = await readGatewayConfig();
   const port = config.port ?? 18789;
 
   // Compute a unified secret: use password when mode is "password", otherwise use token.
@@ -385,6 +384,17 @@ export async function deleteAgentCronJobs(namePrefix: string): Promise<void> {
 
   for (const job of listResult.jobs) {
     if (job.name.startsWith(namePrefix)) {
+      await deleteCronJob(job.id);
+    }
+  }
+}
+
+export async function deleteAgentCronJobByName(name: string): Promise<void> {
+  const listResult = await listCronJobs();
+  if (!listResult.ok || !listResult.jobs) return;
+
+  for (const job of listResult.jobs) {
+    if (job.name === name) {
       await deleteCronJob(job.id);
     }
   }

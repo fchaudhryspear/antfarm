@@ -96,27 +96,34 @@ export function transitionRtbf(input: {
   };
   const proofId = `proof_${crypto.randomUUID()}`;
   const signature = signProof(input.proofSigningSecret, proof);
-  input.db.prepare(`
-    UPDATE factory_rtbf_requests
-    SET state = ?, reversible_at = CASE WHEN ? = 'reversible' THEN datetime('now') ELSE reversible_at END,
-      finalized_at = CASE WHEN ? = 'finalized' THEN datetime('now') ELSE finalized_at END,
-      deletion_proof_id = ?
-    WHERE id = ? AND tenant_id = ? AND subject_id_hash = ?
-  `).run(requestState, requestState, requestState, proofId, input.requestId, input.tenantId, input.subjectIdHash);
-  input.db.prepare(`
-    UPDATE factory_subject_registry
-    SET rtbf_state = ?,
-      rtbf_reversible_at = CASE WHEN ? = 'rtbf_reversible' THEN datetime('now') ELSE rtbf_reversible_at END,
-      rtbf_finalized_at = CASE WHEN ? = 'rtbf_finalized' THEN datetime('now') ELSE rtbf_finalized_at END,
-      deletion_proof_id = ?,
-      updated_at = datetime('now')
-    WHERE tenant_id = ? AND subject_id_hash = ?
-  `).run(registryState, registryState, registryState, proofId, input.tenantId, input.subjectIdHash);
-  input.db.prepare(`
-    INSERT INTO factory_tenant_audit_log (
-      id, tenant_id, event_type, event_chain_type, actor, actor_role, actor_class,
-      payload_json, subject_id_hash, signature, created_at
-    ) VALUES (?, ?, 'rtbf_state_transition', 'rtbf_workflow', ?, 'founder', 'founder', ?, ?, ?, datetime('now'))
-  `).run(proofId, input.tenantId, input.actor, JSON.stringify(proof), input.subjectIdHash, signature);
+  input.db.exec("BEGIN IMMEDIATE");
+  try {
+    input.db.prepare(`
+      UPDATE factory_rtbf_requests
+      SET state = ?, reversible_at = CASE WHEN ? = 'reversible' THEN datetime('now') ELSE reversible_at END,
+        finalized_at = CASE WHEN ? = 'finalized' THEN datetime('now') ELSE finalized_at END,
+        deletion_proof_id = ?
+      WHERE id = ? AND tenant_id = ? AND subject_id_hash = ?
+    `).run(requestState, requestState, requestState, proofId, input.requestId, input.tenantId, input.subjectIdHash);
+    input.db.prepare(`
+      UPDATE factory_subject_registry
+      SET rtbf_state = ?,
+        rtbf_reversible_at = CASE WHEN ? = 'rtbf_reversible' THEN datetime('now') ELSE rtbf_reversible_at END,
+        rtbf_finalized_at = CASE WHEN ? = 'rtbf_finalized' THEN datetime('now') ELSE rtbf_finalized_at END,
+        deletion_proof_id = ?,
+        updated_at = datetime('now')
+      WHERE tenant_id = ? AND subject_id_hash = ?
+    `).run(registryState, registryState, registryState, proofId, input.tenantId, input.subjectIdHash);
+    input.db.prepare(`
+      INSERT INTO factory_tenant_audit_log (
+        id, tenant_id, event_type, event_chain_type, actor, actor_role, actor_class,
+        payload_json, subject_id_hash, signature, created_at
+      ) VALUES (?, ?, 'rtbf_state_transition', 'rtbf_workflow', ?, 'founder', 'founder', ?, ?, ?, datetime('now'))
+    `).run(proofId, input.tenantId, input.actor, JSON.stringify(proof), input.subjectIdHash, signature);
+    input.db.exec("COMMIT");
+  } catch (error) {
+    input.db.exec("ROLLBACK");
+    throw error;
+  }
   return proofId;
 }
