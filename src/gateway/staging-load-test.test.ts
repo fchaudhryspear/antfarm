@@ -50,4 +50,55 @@ describe("isolated staging gateway load test", () => {
       db.close();
     }
   });
+
+  it("enforces maxParallelUnits across lifecycle requests", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "antfarm-gateway-load-test-"));
+    const evidencePath = path.join(dir, "evidence.json");
+    const evidenceDbPath = path.join(dir, "evidence.db");
+    const originalFetch = globalThis.fetch;
+    let inFlight = 0;
+    let maxInFlight = 0;
+
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>): Promise<Response> => {
+      const input = args[0];
+      const url = input instanceof Request ? input.url : input.toString();
+      const method = (input instanceof Request ? input.method : args[1]?.method) ?? "GET";
+      const { pathname } = new URL(url);
+      const isLifecycleRequest =
+        (method === "POST" && pathname === "/sessions") ||
+        (method === "POST" && /^\/sessions\/[^/]+\/heartbeat$/.test(pathname)) ||
+        (method === "DELETE" && /^\/sessions\/[^/]+$/.test(pathname));
+
+      if (!isLifecycleRequest) return await originalFetch(...args);
+
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return await originalFetch(...args);
+      } finally {
+        inFlight -= 1;
+      }
+    }) as typeof fetch;
+
+    try {
+      const result = await runGatewayLoadTest({
+        targetConcurrentSessions: 5,
+        maxParallelUnits: 2,
+        sustainedSeconds: 0.1,
+        heartbeatIntervalMs: 10,
+        heartbeatTimeoutMs: 60,
+        evidencePath,
+        evidenceDbPath,
+      });
+
+      assert.equal(result.pass, true);
+      assert.equal(result.cap_policy.max_parallel_units, 2);
+      assert.equal(result.lifecycle.created_sessions, 5);
+      assert.equal(result.lifecycle.teardown_count, 5);
+      assert.ok(maxInFlight <= 2, `expected at most 2 in-flight lifecycle requests, saw ${maxInFlight}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

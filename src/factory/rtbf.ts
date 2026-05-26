@@ -79,6 +79,13 @@ export function transitionRtbf(input: {
   }
 
   const requestState = input.nextState;
+  const expectedRequestState = input.nextState === "reversible" ? "requested" : "reversible";
+  const request = input.db.prepare(`
+    SELECT state FROM factory_rtbf_requests WHERE id = ? AND tenant_id = ? AND subject_id_hash = ?
+  `).get(input.requestId, input.tenantId, input.subjectIdHash) as { state: string } | undefined;
+  if (!request) throw new Error("unknown RTBF request");
+  if (request.state !== expectedRequestState) throw new Error("RTBF request state mismatch");
+
   const registryState = input.nextState === "reversible" ? "rtbf_reversible" : "rtbf_finalized";
   const proof = {
     request_id: input.requestId,

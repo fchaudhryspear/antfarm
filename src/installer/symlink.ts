@@ -4,6 +4,16 @@ import { fileURLToPath } from "url";
 
 const BINARY_NAME = "antfarm";
 
+function resolveCliEntry(): string {
+  return join(
+    fileURLToPath(import.meta.url),
+    "..",
+    "..",
+    "cli",
+    "cli.js",
+  );
+}
+
 /**
  * Ensure `antfarm` is available on PATH by symlinking into ~/.local/bin.
  * Safe to call repeatedly — skips if already correct, updates if stale.
@@ -16,13 +26,7 @@ export function ensureCliSymlink(): void {
   const linkPath = join(localBin, BINARY_NAME);
 
   // Resolve the actual CLI entry point (dist/cli/cli.js)
-  const cliEntry = join(
-    fileURLToPath(import.meta.url),
-    "..",
-    "..",
-    "cli",
-    "cli.js",
-  );
+  const cliEntry = resolveCliEntry();
 
   try {
     mkdirSync(localBin, { recursive: true });
@@ -69,12 +73,23 @@ export function removeCliSymlink(): void {
   if (!home) return;
 
   const linkPath = join(home, ".local", "bin", BINARY_NAME);
-  if (existsSync(linkPath)) {
-    try {
-      unlinkSync(linkPath);
-      console.log(`  ✓ Removed symlink ${linkPath}`);
-    } catch {
-      console.warn(`  ⚠ Could not remove symlink at ${linkPath}`);
+  const cliEntry = resolveCliEntry();
+  try {
+    const stats = lstatSync(linkPath);
+    if (!stats.isSymbolicLink()) {
+      return;
     }
+    if (readlinkSync(linkPath) !== cliEntry) {
+      return;
+    }
+  } catch {
+    return;
+  }
+
+  try {
+    unlinkSync(linkPath);
+    console.log(`  ✓ Removed symlink ${linkPath}`);
+  } catch {
+    console.warn(`  ⚠ Could not remove symlink at ${linkPath}`);
   }
 }

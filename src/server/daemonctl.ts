@@ -29,6 +29,13 @@ export function isRunning(): { running: true; pid: number } | { running: false }
   }
 }
 
+function readPidFile(): number | null {
+  const pidFile = getPidFile();
+  if (!fs.existsSync(pidFile)) return null;
+  const pid = parseInt(fs.readFileSync(pidFile, "utf-8").trim(), 10);
+  return isNaN(pid) ? null : pid;
+}
+
 export async function startDaemon(port = 3333): Promise<{ pid: number; port: number }> {
   const status = isRunning();
   if (status.running) {
@@ -49,8 +56,36 @@ export async function startDaemon(port = 3333): Promise<{ pid: number; port: num
   });
   child.unref();
 
+  let startupFailure: Error | null = null;
+  const onError = (error: Error) => {
+    startupFailure = error;
+  };
+  const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+    startupFailure = new Error(`Daemon exited during startup (${signal ?? code ?? "unknown"}). Check ${logFile}`);
+  };
+  child.once("error", onError);
+  child.once("exit", onExit);
+
   // Wait 1s then confirm
   await new Promise((r) => setTimeout(r, 1000));
+  child.off("error", onError);
+  child.off("exit", onExit);
+
+  if (startupFailure) {
+    const pid = readPidFile();
+    if (child.pid && pid === child.pid) {
+      try { fs.unlinkSync(getPidFile()); } catch {}
+    }
+    throw startupFailure;
+  }
+
+  const pid = readPidFile();
+  if (!child.pid || pid !== child.pid) {
+    if (pid !== null) {
+      try { fs.unlinkSync(getPidFile()); } catch {}
+    }
+    throw new Error("Daemon failed to start. Check " + logFile);
+  }
 
   const check = isRunning();
   if (!check.running) {

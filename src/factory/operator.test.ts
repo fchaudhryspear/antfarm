@@ -98,4 +98,24 @@ describe("factory operator bridge", () => {
     assert.equal(finalRun.error_summary, null);
     assert.equal(listDashboardAuditEvents({ factoryRunId: run.id }, db).length, 3);
   });
+
+  it("rejects stale run mutations without changing state or recording audit", () => {
+    const db = memoryDb();
+    const item = createFactoryItem({ title: "Reject stale operator mutation" }, db);
+    const run = createFactoryRun({ factoryItemId: item.id, workflowId: "agent-swarm-v3" }, db);
+    const newerUpdatedAt = new Date(Date.now() + 1000).toISOString();
+    db.prepare("UPDATE factory_runs SET updated_at = ? WHERE id = ?").run(newerUpdatedAt, run.id);
+
+    assert.throws(
+      () => pauseFactoryRun({ factoryRunId: run.id, expectedUpdatedAt: run.updated_at, reason: "stale pause" }, db),
+      StaleOperatorCommandError,
+    );
+
+    const current = db.prepare("SELECT status, updated_at FROM factory_runs WHERE id = ?").get(run.id) as { status: string; updated_at: string };
+    assert.equal(current.status, "pending");
+    assert.equal(current.updated_at, newerUpdatedAt);
+    assert.equal(listDashboardAuditEvents({ factoryRunId: run.id }, db).length, 0);
+    const operatorEvents = db.prepare("SELECT COUNT(*) AS n FROM factory_events WHERE factory_run_id = ? AND event_type = 'operator.run.pause'").get(run.id) as { n: number };
+    assert.equal(operatorEvents.n, 0);
+  });
 });

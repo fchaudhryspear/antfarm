@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { logger } from "../lib/logger.js";
 
 const SCORES_FILE = path.join(
@@ -193,15 +193,35 @@ function scoreCompilation(
       // Python: try py_compile on modified files
       const filesMatch = output.match(/FILES_MODIFIED:\s*(.+)/i);
       if (filesMatch) {
-        const files = filesMatch[1].split(",").map(f => f.trim()).filter(f => f.endsWith(".py"));
+        const modifiedFiles = filesMatch[1].split(",").map(f => f.trim()).filter(Boolean);
+        const scriptFiles = modifiedFiles.filter(f => /\.(?:ts|tsx|js|jsx)$/.test(f));
+        if (scriptFiles.length > 0 && isTypeScriptProject(repoPath)) {
+          try {
+            execFileSync(resolveTscBin(repoPath), ["--noEmit", "-p", path.join(repoPath, "tsconfig.json")], {
+              encoding: "utf-8",
+              stdio: ["pipe", "pipe", "pipe"],
+              timeout: 30_000,
+            });
+            return 5;
+          } catch {
+            flags?.push("compile_fail_typescript");
+            return 1;
+          }
+        }
+
+        const files = modifiedFiles.filter(f => f.endsWith(".py"));
         let passed = 0;
         let total = 0;
         for (const file of files.slice(0, 10)) { // Cap at 10 files
-          const fullPath = path.join(repoPath, file);
+          const fullPath = resolveRepoFile(repoPath, file);
+          if (!fullPath) {
+            flags?.push(`invalid_path_${path.basename(file)}`);
+            continue;
+          }
           if (!fs.existsSync(fullPath)) continue;
           total++;
           try {
-            execSync(`python3 -m py_compile "${fullPath}"`, {
+            execFileSync("python3", ["-m", "py_compile", fullPath], {
               encoding: "utf-8",
               stdio: ["pipe", "pipe", "pipe"],
               timeout: 10_000,
@@ -224,6 +244,42 @@ function scoreCompilation(
   }
 
   return 3;
+}
+
+function resolveRepoFile(repoPath: string, file: string): string | null {
+  if (path.isAbsolute(file)) return null;
+
+  const repoRoot = path.resolve(repoPath);
+  const fullPath = path.resolve(repoRoot, file);
+  const relativePath = path.relative(repoRoot, fullPath);
+
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) return null;
+  return fullPath;
+}
+
+function isTypeScriptProject(repoPath: string): boolean {
+  if (!fs.existsSync(path.join(repoPath, "tsconfig.json"))) return false;
+
+  try {
+    const packageJsonPath = path.join(repoPath, "package.json");
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    return Boolean(packageJson.dependencies?.typescript || packageJson.devDependencies?.typescript);
+  } catch {
+    return false;
+  }
+}
+
+function resolveTscBin(repoPath: string): string {
+  const repoTsc = path.join(repoPath, "node_modules", "typescript", "bin", "tsc");
+  if (fs.existsSync(repoTsc)) return repoTsc;
+
+  const cwdTsc = path.join(process.cwd(), "node_modules", "typescript", "bin", "tsc");
+  if (fs.existsSync(cwdTsc)) return cwdTsc;
+
+  return "tsc";
 }
 
 function scoreNoHallucination(output: string, role: string, flags: string[]): number {
@@ -315,16 +371,6 @@ export function persistScore(score: StepScore): void {
   try {
     const dir = path.dirname(SCORES_FILE);
     fs.mkdirSync(dir, { recursive: true });
-
-    // Rotate if file exceeds 10MB
-    try {
-      const stats = fs.statSync(SCORES_FILE);
-      if (stats.size > 10 * 1024 * 1024) {
-        const rotated = SCORES_FILE + ".1";
-        try { fs.unlinkSync(rotated); } catch {}
-        fs.renameSync(SCORES_FILE, rotated);
-      }
-    } catch {}
 
     fs.appendFileSync(SCORES_FILE, JSON.stringify(score) + "\n");
   } catch (e) {

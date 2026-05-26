@@ -156,38 +156,62 @@ function mutateFactoryRun(input: {
   reason?: string;
 }, db: DatabaseSync = getDb()): OperatorCommandResult {
   const operator = input.operator ?? "hermes";
-  const run = getFactoryRun(input.factoryRunId, db);
-  assertFreshRun(run, input.expectedUpdatedAt);
-  if (!input.allowedStatuses.includes(run.status)) {
-    throw new Error(`${input.command} cannot mutate run ${run.id} from status ${run.status}`);
-  }
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const run = getFactoryRun(input.factoryRunId, db);
+    assertFreshRun(run, input.expectedUpdatedAt);
+    if (!input.allowedStatuses.includes(run.status)) {
+      throw new Error(`${input.command} cannot mutate run ${run.id} from status ${run.status}`);
+    }
 
-  const now = nowIso();
-  db.prepare(`
-    UPDATE factory_runs SET
-      status = ?,
-      error_summary = CASE WHEN ? = 'run.retry' THEN NULL ELSE error_summary END,
-      completed_at = CASE WHEN ? = 'run.retry' THEN NULL ELSE completed_at END,
-      updated_at = ?
-    WHERE id = ?
-  `).run(input.nextStatus, input.command, input.command, now, run.id);
-  appendFactoryEvent({
-    factoryItemId: run.factory_item_id,
-    factoryRunId: run.id,
-    eventType: `operator.${input.command}`,
-    actor: operator,
-    payload: { from_status: run.status, to_status: input.nextStatus, reason: input.reason ?? null },
-  }, db);
-  const auditEvent = writeAudit({
-    factoryItemId: run.factory_item_id,
-    factoryRunId: run.id,
-    operator,
-    command: input.command,
-    targetType: "factory_run",
-    targetId: run.id,
-    payload: { from_status: run.status, to_status: input.nextStatus, reason: input.reason ?? null },
-  }, db);
-  return { ok: true, command: input.command, factoryItemId: run.factory_item_id, factoryRunId: run.id, auditEvent };
+    const now = nowIso();
+    const statusPlaceholders = input.allowedStatuses.map(() => "?").join(", ");
+    const stalePredicate = input.expectedUpdatedAt ? " AND updated_at = ?" : "";
+    const updateResult = db.prepare(`
+      UPDATE factory_runs SET
+        status = ?,
+        error_summary = CASE WHEN ? = 'run.retry' THEN NULL ELSE error_summary END,
+        completed_at = CASE WHEN ? = 'run.retry' THEN NULL ELSE completed_at END,
+        updated_at = ?
+      WHERE id = ? AND status IN (${statusPlaceholders})${stalePredicate}
+    `).run(
+      input.nextStatus,
+      input.command,
+      input.command,
+      now,
+      run.id,
+      ...input.allowedStatuses,
+      ...(input.expectedUpdatedAt ? [input.expectedUpdatedAt] : []),
+    );
+    if (updateResult.changes !== 1) {
+      const current = getFactoryRun(run.id, db);
+      if (input.expectedUpdatedAt && current.updated_at !== input.expectedUpdatedAt) {
+        throw new StaleOperatorCommandError(run.id);
+      }
+      throw new Error(`${input.command} cannot mutate run ${run.id} from status ${current.status}`);
+    }
+    appendFactoryEvent({
+      factoryItemId: run.factory_item_id,
+      factoryRunId: run.id,
+      eventType: `operator.${input.command}`,
+      actor: operator,
+      payload: { from_status: run.status, to_status: input.nextStatus, reason: input.reason ?? null },
+    }, db);
+    const auditEvent = writeAudit({
+      factoryItemId: run.factory_item_id,
+      factoryRunId: run.id,
+      operator,
+      command: input.command,
+      targetType: "factory_run",
+      targetId: run.id,
+      payload: { from_status: run.status, to_status: input.nextStatus, reason: input.reason ?? null },
+    }, db);
+    db.exec("COMMIT");
+    return { ok: true, command: input.command, factoryItemId: run.factory_item_id, factoryRunId: run.id, auditEvent };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export function pauseFactoryRun(input: {

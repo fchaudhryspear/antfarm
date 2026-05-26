@@ -78,14 +78,6 @@ Preflight whitelist: the heredoc/pipe completion pattern is allowed only when th
 node ${cli} step complete "$STEP_ID"
 \`\`\`
 
-// Fix #3 (RCA 322-325): Session timeout hook — register emergency exit handler.
-// If the session is killed (timeout, OOM, token limit), the shell will execute this on exit.
-SESSION_TIMEOUT_HOOK=$(mktemp)
-echo '#!/bin/bash' > "$SESSION_TIMEOUT_HOOK"
-echo "node ${cli} step fail '<stepId>' 'Session timeout — no output produced'" >> "$SESSION_TIMEOUT_HOOK"
-chmod +x "$SESSION_TIMEOUT_HOOK"
-trap "bash $SESSION_TIMEOUT_HOOK; rm -f $SESSION_TIMEOUT_HOOK" EXIT
-
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
 
@@ -129,15 +121,6 @@ Preflight whitelist: the heredoc/pipe completion pattern is allowed only when th
 \`\`\`
 node ${cli} step complete "$STEP_ID"
 \`\`\`
-
-// Fix #3 (RCA 322-325): Session timeout hook — register emergency exit handler.
-// Parses stepId from the JSON you received, then sets a trap to auto-fail on session death.
-SESSION_TIMEOUT_HOOK=$(mktemp)
-STEP_ID=$(echo '<stepId>' | grep -oP '(?<=<)[^>]+(?=>)' || echo '<stepId>')
-echo '#!/bin/bash' > "$SESSION_TIMEOUT_HOOK"
-echo "node ${cli} step fail \"$STEP_ID\" 'Session timeout — no output produced'\"" >> "$SESSION_TIMEOUT_HOOK"
-chmod +x "$SESSION_TIMEOUT_HOOK"
-trap "bash $SESSION_TIMEOUT_HOOK; rm -f $SESSION_TIMEOUT_HOOK" EXIT
 
 The workflow cannot advance until you report. Your session ending without reporting = broken pipeline.`;
 }
@@ -433,8 +416,8 @@ export async function pauseWorkflowCrons(workflowId: string, reason: string): Pr
 
   for (const job of matching) {
     try {
-      const { execSync } = await import("node:child_process");
-      execSync(`openclaw cron disable ${job.id}`, { stdio: "pipe" });
+      const { execFileSync } = await import("node:child_process");
+      execFileSync("openclaw", ["cron", "disable", job.id], { stdio: "pipe" });
       log.info(`Paused cron ${job.name} (reason: ${reason})`);
     } catch (err) {
       log.warn(`Failed to disable cron ${job.name}: ${err}`);
@@ -461,8 +444,8 @@ export async function resumeWorkflowCrons(workflowId: string): Promise<void> {
 
   for (const job of matching) {
     try {
-      const { execSync } = await import("node:child_process");
-      execSync(`openclaw cron enable ${job.id}`, { stdio: "pipe" });
+      const { execFileSync } = await import("node:child_process");
+      execFileSync("openclaw", ["cron", "enable", job.id], { stdio: "pipe" });
       log.info(`Resumed cron ${job.name}`);
     } catch (err) {
       log.warn(`Failed to enable cron ${job.name}: ${err}`);

@@ -157,6 +157,41 @@ describe("v3.1 audit enforcement and RTBF", () => {
     assert.equal(proofRows.some((row) => row.payload_json.includes("person@example.com")), false);
   });
 
+  it("rejects RTBF transitions without a matching request", () => {
+    const db = memoryDb();
+    const subjectHash = upsertSubjectRegistry({
+      db,
+      tenantId: "flobase",
+      tenantLookupPepper: "tenant-pepper",
+      naturalSubjectId: "person@example.com",
+      envelopeKeyId: "kms://tenant/flobase/subject/opaque",
+    });
+
+    assert.throws(
+      () => transitionRtbf({
+        db,
+        requestId: "missing",
+        tenantId: "flobase",
+        subjectIdHash: subjectHash,
+        nextState: "reversible",
+        actor: "faisal",
+        proofSigningSecret: "proof-secret",
+        kmsDeletionEvidence: { key_state: "disabled" },
+      }),
+      /unknown RTBF request/,
+    );
+
+    const registry = db.prepare(`
+      SELECT rtbf_state, deletion_proof_id FROM factory_subject_registry WHERE tenant_id = ? AND subject_id_hash = ?
+    `).get("flobase", subjectHash) as { rtbf_state: string; deletion_proof_id: string | null };
+    assert.equal(registry.rtbf_state, "active");
+    assert.equal(registry.deletion_proof_id, null);
+    const auditRows = db.prepare(`
+      SELECT COUNT(*) AS n FROM factory_tenant_audit_log WHERE event_type = 'rtbf_state_transition'
+    `).get() as { n: number };
+    assert.equal(auditRows.n, 0);
+  });
+
   it("keeps future PII tenant hashing testable and opaque", () => {
     const first = subjectIdHash("future-pii-pepper", "lease-123456");
     const second = subjectIdHash("future-pii-pepper-rotated", "lease-123456");
