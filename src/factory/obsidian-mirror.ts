@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
+import { redactText } from "./redaction.js";
 import { appendFactoryEvent, getFactoryItemStatus } from "./store.js";
 
 export type ObsidianMirrorResult = {
@@ -48,6 +49,8 @@ function redact(value: string): { text: string; redacted: boolean } {
       return /[:=]/.test(match) ? `${key.trim()}: [REDACTED]` : "[REDACTED]";
     });
   }
+  text = redactText(text, "finance_v1").text;
+  text = redactText(text, "pii_v1").text;
   return { text, redacted: text !== value };
 }
 
