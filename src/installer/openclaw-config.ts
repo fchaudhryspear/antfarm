@@ -1,3 +1,4 @@
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import JSON5 from "json5";
 import { resolveOpenClawConfigPath } from "./paths.js";
@@ -50,6 +51,13 @@ export async function writeOpenClawConfig(
   path: string,
   config: OpenClawConfig,
 ): Promise<void> {
+  try {
+    await fs.copyFile(path, `${path}.antfarm-backup`, fsConstants.COPYFILE_EXCL);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+      throw err;
+    }
+  }
   const content = `${JSON.stringify(config, null, 2)}\n`;
   await fs.writeFile(path, content, "utf-8");
 }
