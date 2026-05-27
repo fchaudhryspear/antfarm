@@ -16,9 +16,41 @@ async function ensureDir(dir: string): Promise<void> {
 }
 
 async function copyDirectory(sourceDir: string, destinationDir: string) {
-  await fs.rm(destinationDir, { recursive: true, force: true });
-  await ensureDir(path.dirname(destinationDir));
-  await fs.cp(sourceDir, destinationDir, { recursive: true });
+  const parentDir = path.dirname(destinationDir);
+  const baseName = path.basename(destinationDir);
+  await ensureDir(parentDir);
+
+  const tempDir = await fs.mkdtemp(path.join(parentDir, `.${baseName}.tmp-`));
+  let backupDir: string | undefined;
+  let destinationMoved = false;
+  let replacementInstalled = false;
+
+  try {
+    await fs.cp(sourceDir, tempDir, { recursive: true });
+    if (!(await pathExists(path.join(tempDir, "workflow.yml")))) {
+      throw new Error(`Copied workflow is missing workflow.yml: ${sourceDir}`);
+    }
+
+    if (await pathExists(destinationDir)) {
+      backupDir = await fs.mkdtemp(path.join(parentDir, `.${baseName}.backup-`));
+      await fs.rm(backupDir, { recursive: true, force: true });
+      await fs.rename(destinationDir, backupDir);
+      destinationMoved = true;
+    }
+
+    await fs.rename(tempDir, destinationDir);
+    replacementInstalled = true;
+  } catch (error) {
+    if (destinationMoved && !replacementInstalled && backupDir) {
+      await fs.rename(backupDir, destinationDir).catch(() => undefined);
+    }
+    throw error;
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+    if (replacementInstalled && backupDir) {
+      await fs.rm(backupDir, { recursive: true, force: true });
+    }
+  }
 }
 
 /**
