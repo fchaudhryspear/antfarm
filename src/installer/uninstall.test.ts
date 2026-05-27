@@ -3,7 +3,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { removeManagedAgentParents, selectAntfarmManagedAgents } from "./uninstall.js";
+import {
+  removeManagedAgentParents,
+  selectAntfarmManagedAgents,
+  sessionMaintenanceMatchesDefaults,
+} from "./uninstall.js";
 
 const originalStateDir = process.env.OPENCLAW_STATE_DIR;
 const tempDirs: string[] = [];
@@ -94,5 +98,40 @@ describe("removeManagedAgentParents", () => {
     ]);
 
     assert.equal(await pathExists(managedParent), false);
+  });
+});
+
+describe("uninstall session maintenance cleanup", () => {
+  it("does not treat a custom pruneAfter value as Antfarm defaults", () => {
+    assert.equal(
+      sessionMaintenanceMatchesDefaults({
+        mode: "enforce",
+        pruneAfter: "30d",
+        maxEntries: 500,
+        rotateBytes: "10mb",
+      }),
+      false,
+    );
+  });
+
+  it("recognizes current and legacy Antfarm default prune settings", () => {
+    assert.equal(
+      sessionMaintenanceMatchesDefaults({
+        mode: "enforce",
+        pruneAfter: "7d",
+        maxEntries: 500,
+        rotateBytes: "10mb",
+      }),
+      true,
+    );
+    assert.equal(
+      sessionMaintenanceMatchesDefaults({
+        mode: "enforce",
+        pruneDays: 7,
+        maxEntries: 500,
+        rotateBytes: "10mb",
+      }),
+      true,
+    );
   });
 });
