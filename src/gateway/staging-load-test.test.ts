@@ -162,4 +162,63 @@ describe("isolated staging gateway load test", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("records failure evidence when stale maintenance fails", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "antfarm-gateway-load-test-"));
+    const evidencePath = path.join(dir, "evidence.json");
+    const evidenceDbPath = path.join(dir, "evidence.db");
+    const originalFetch = globalThis.fetch;
+    let failedMarkStale = false;
+
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>): Promise<Response> => {
+      const input = args[0];
+      const url = input instanceof Request ? input.url : input.toString();
+      const method = (input instanceof Request ? input.method : args[1]?.method) ?? "GET";
+      const { pathname } = new URL(url);
+
+      if (!failedMarkStale && method === "POST" && pathname === "/maintenance/mark-stale") {
+        failedMarkStale = true;
+        return new Response(JSON.stringify({ error: "maintenance_unavailable" }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      return await originalFetch(...args);
+    }) as typeof fetch;
+
+    try {
+      const result = await runGatewayLoadTest({
+        targetConcurrentSessions: 3,
+        sustainedSeconds: 0.1,
+        heartbeatIntervalMs: 10,
+        heartbeatTimeoutMs: 60,
+        evidencePath,
+        evidenceDbPath,
+      });
+
+      assert.equal(result.pass, false);
+      assert.equal(result.stability.failed_requests, 1);
+      assert.equal(result.stability.connection_drops, 1);
+      assert.ok(result.blockers.some((blocker) => blocker.startsWith("stale maintenance probe failed:")));
+
+      const evidence = JSON.parse(await readFile(evidencePath, "utf8")) as typeof result;
+      assert.equal(evidence.pass, false);
+      assert.equal(evidence.stability.failed_requests, 1);
+
+      const db = new DatabaseSync(evidenceDbPath);
+      try {
+        const row = db.prepare("SELECT pass, result_json FROM gateway_load_test_runs WHERE id = ?").get(result.run_id) as {
+          pass: number;
+          result_json: string;
+        };
+        assert.equal(row.pass, 0);
+        assert.equal((JSON.parse(row.result_json) as typeof result).stability.failed_requests, 1);
+      } finally {
+        db.close();
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
