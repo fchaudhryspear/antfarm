@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,6 +38,15 @@ describe("package manifest release policy", () => {
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 
     assert.equal(pkg.scripts.start, "npm run build && node dist/cli/cli.js");
+  });
+
+  it("points the built package bin at an existing dist-relative target", () => {
+    const distPkg = JSON.parse(readFileSync(join(root, "dist", "package.json"), "utf8"));
+
+    assert.equal(distPkg.bin.antfarm, "cli/cli.js");
+    const binPath = join(root, "dist", distPkg.bin.antfarm);
+    assert.ok(existsSync(binPath), "dist package bin path should resolve");
+    assert.ok(statSync(binPath).mode & 0o111, "dist package bin target should be executable");
   });
 
   it("lets staging load-test JSON flush before process exit", () => {
