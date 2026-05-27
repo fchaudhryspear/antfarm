@@ -109,7 +109,7 @@ const UPDATE_HINT =
 
 function isTransientGatewayFailure(status: number | undefined): boolean {
   if (status === undefined) return true;
-  return status === 404 || status >= 500;
+  return status === 401 || status === 403 || status === 404 || status >= 500;
 }
 
 /** Retry helper with exponential backoff for transient gateway failures. */
