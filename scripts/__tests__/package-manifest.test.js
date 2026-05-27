@@ -40,6 +40,13 @@ describe("package manifest release policy", () => {
     assert.equal(pkg.scripts.start, "npm run build && node dist/cli/cli.js");
   });
 
+  it("lets staging load-test JSON flush before process exit", () => {
+    const script = readFileSync(join(root, "scripts/gateway-staging-load-test.mjs"), "utf8");
+
+    assert.match(script, /process\.exitCode = result\.pass \? 0 : 1/);
+    assert.doesNotMatch(script, /process\.exit\(/);
+  });
+
   it("declares the minimum Node runtime for unflagged node:sqlite", () => {
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
     const lock = JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8"));

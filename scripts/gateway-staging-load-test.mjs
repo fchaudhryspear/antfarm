@@ -28,4 +28,4 @@ const result = await runGatewayLoadTest({
 });
 
 console.log(JSON.stringify(result, null, 2));
-process.exit(result.pass ? 0 : 1);
+process.exitCode = result.pass ? 0 : 1;
