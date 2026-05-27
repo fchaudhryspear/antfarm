@@ -95,14 +95,14 @@ function resolveSources(repoPath: string | undefined, sourceFiles: string[] | un
   if (!sourceFiles?.length) return [];
   if (!repoPath) throw new Error("repoPath is required when sourceFiles are provided");
 
-  const repoAbs = path.resolve(repoPath);
+  const repoAbs = fs.realpathSync.native(path.resolve(repoPath));
   const seen = new Set<string>();
   const sources: ContextPackSource[] = [];
   for (const file of sourceFiles) {
-    const absPath = path.resolve(repoAbs, file);
+    const absPath = fs.realpathSync.native(path.resolve(repoAbs, file));
+    const relativePath = assertInsideRepo(repoAbs, absPath);
     const stat = fs.statSync(absPath);
     if (!stat.isFile()) throw new Error(`Context pack source is not a file: ${absPath}`);
-    const relativePath = assertInsideRepo(repoAbs, absPath);
     if (seen.has(relativePath)) continue;
     seen.add(relativePath);
     const content = fs.readFileSync(absPath);
