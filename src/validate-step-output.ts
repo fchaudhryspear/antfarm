@@ -85,22 +85,45 @@ export type ContractValidationResult =
  * Supports: comma-separated string, JSON array, or single key.
  */
 export function parseExpects(expectsField: string | null): string[] {
-  if (!expectsField || expectsField.trim() === "") return [];
+  return parseExpectsWithDiagnostics(expectsField).keys;
+}
+
+function parseExpectsWithDiagnostics(expectsField: string | null): {
+  keys: string[];
+  invalidJsonArrayEntries: boolean;
+} {
+  if (!expectsField || expectsField.trim() === "") {
+    return { keys: [], invalidJsonArrayEntries: false };
+  }
   
   // Try JSON array first
   try {
     const parsed = JSON.parse(expectsField);
-    if (Array.isArray(parsed)) return parsed.map((k: string) => normalizeContractKey(k));
+    if (Array.isArray(parsed)) {
+      const keys: string[] = [];
+      let invalidJsonArrayEntries = false;
+      for (const value of parsed) {
+        if (typeof value === "string") {
+          keys.push(normalizeContractKey(value));
+        } else {
+          invalidJsonArrayEntries = true;
+        }
+      }
+      return { keys, invalidJsonArrayEntries };
+    }
   } catch {
     // Not JSON, treat as comma-separated or single key
   }
   
   // Comma-separated or single key
-  return expectsField
-    .split(",")
-    .map((k) => k.trim())
-    .filter((k) => k.length > 0)
-    .map(normalizeContractKey);
+  return {
+    keys: expectsField
+      .split(",")
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0)
+      .map(normalizeContractKey),
+    invalidJsonArrayEntries: false,
+  };
 }
 
 /**
@@ -124,7 +147,8 @@ export function validateContractAndDispatch(
     : undefined;
   
   // 1. Validate expects contract
-  const expectedKeys = parseExpects(expectsField);
+  const expectedContract = parseExpectsWithDiagnostics(expectsField);
+  const expectedKeys = expectedContract.keys;
   const missingExpects = expectedKeys.filter((key) => !presentKeys.has(key));
   
   // 2. Validate SWARM_STATUS for dispatch outputs
@@ -153,6 +177,15 @@ export function validateContractAndDispatch(
       swarmStatusInvalid: isDispatch ? swarmStatusInvalid : undefined,
       reason: `Missing expected output keys: ${missingExpects.join(", ")}` + 
               (swarmStatusInvalid ? "; SWARM_STATUS must be 'completed', 'skipped', 'dispatched', 'running', or 'blocked'" : ""),
+    };
+  }
+
+  if (expectedContract.invalidJsonArrayEntries) {
+    return {
+      valid: false,
+      missingExpects: [],
+      swarmStatusInvalid: isDispatch ? swarmStatusInvalid : undefined,
+      reason: "Expected output contract JSON array must contain only strings",
     };
   }
   
