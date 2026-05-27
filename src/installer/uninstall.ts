@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { execSync } from "node:child_process";
-import { readOpenClawConfig, writeOpenClawConfig } from "./openclaw-config.js";
+import { readOpenClawConfig, writeOpenClawConfig, type OpenClawConfig } from "./openclaw-config.js";
 import { removeMainAgentGuidance } from "./main-agent-guidance.js";
 import {
   resolveAntfarmRoot,
@@ -132,6 +132,22 @@ const DEFAULT_SESSION_MAINTENANCE = {
   maxEntries: 500,
   rotateBytes: "10mb",
 } as const;
+const DEFAULT_SESSION_PRUNE_DAYS = 7;
+
+export function sessionMaintenanceMatchesDefaults(
+  maintenance: NonNullable<NonNullable<OpenClawConfig["session"]>["maintenance"]>,
+): boolean {
+  const hasDefaultPruneSetting =
+    maintenance.pruneAfter === DEFAULT_SESSION_MAINTENANCE.pruneAfter ||
+    (maintenance.pruneAfter === undefined && maintenance.pruneDays === DEFAULT_SESSION_PRUNE_DAYS);
+
+  return (
+    maintenance.mode === DEFAULT_SESSION_MAINTENANCE.mode &&
+    hasDefaultPruneSetting &&
+    maintenance.maxEntries === DEFAULT_SESSION_MAINTENANCE.maxEntries &&
+    maintenance.rotateBytes === DEFAULT_SESSION_MAINTENANCE.rotateBytes
+  );
+}
 
 function getActiveRuns(workflowId?: string): Array<{ id: string; workflow_id: string; task: string }> {
   try {
@@ -238,13 +254,7 @@ export async function uninstallAllWorkflows(): Promise<void> {
   }
   if (config.session?.maintenance) {
     const maintenance = config.session.maintenance;
-    const matchesDefaults =
-      maintenance.mode === DEFAULT_SESSION_MAINTENANCE.mode &&
-      (maintenance.pruneAfter === DEFAULT_SESSION_MAINTENANCE.pruneAfter ||
-        maintenance.pruneDays === undefined) &&
-      maintenance.maxEntries === DEFAULT_SESSION_MAINTENANCE.maxEntries &&
-      maintenance.rotateBytes === DEFAULT_SESSION_MAINTENANCE.rotateBytes;
-    if (matchesDefaults) {
+    if (sessionMaintenanceMatchesDefaults(maintenance)) {
       delete config.session.maintenance;
       if (Object.keys(config.session).length === 0) {
         delete config.session;

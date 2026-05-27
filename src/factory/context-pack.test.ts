@@ -115,4 +115,30 @@ describe("context pack generator", () => {
       assert.doesNotMatch(content, /artifactsecret/);
     }
   });
+
+  it("rejects symlinked source files that resolve outside repo_path", () => {
+    const root = tempDir();
+    const repo = path.join(root, "repo");
+    const outputRoot = path.join(root, "packs");
+    const outsideSecret = path.join(root, "outside-secret.txt");
+    fs.mkdirSync(repo, { recursive: true });
+    fs.writeFileSync(outsideSecret, "external secret\n");
+    fs.symlinkSync(outsideSecret, path.join(repo, "linked-secret"));
+
+    const db = memoryDb();
+    const item = createFactoryItem({ id: "fi_symlink_escape", title: "Reject symlink escape" }, db);
+
+    assert.throws(
+      () => generateContextPack({
+        factoryItem: item,
+        stage: "requirements",
+        agentRole: "product-strategist",
+        task: "Define the feature",
+        repoPath: repo,
+        sourceFiles: ["linked-secret"],
+        outputRoot,
+      }),
+      /Context pack source must be inside repo_path/,
+    );
+  });
 });

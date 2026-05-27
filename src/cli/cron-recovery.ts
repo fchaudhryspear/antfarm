@@ -13,6 +13,7 @@ import { loadWorkflowSpec } from '../installer/workflow-spec.js';
 import { resolveWorkflowDir } from '../installer/paths.js';
 import { listCronJobs } from '../installer/gateway-api.js';
 import { getDb } from '../db.js';
+import type { WorkflowSpec } from '../installer/types.js';
 
 interface ActiveRun {
   id: string;
@@ -20,6 +21,17 @@ interface ActiveRun {
   status: string;
   task: string;
   updated_at: string;
+}
+
+type CronJob = { name: string };
+
+interface RecoverCronsDeps {
+  getActiveRuns?: () => ActiveRun[];
+  resolveWorkflowDir?: (workflowId: string) => string;
+  loadWorkflowSpec?: (workflowDir: string) => Promise<WorkflowSpec>;
+  listCronJobs?: () => Promise<{ jobs?: CronJob[] }>;
+  ensureWorkflowCrons?: (workflow: WorkflowSpec) => Promise<void>;
+  log?: (message: string) => void;
 }
 
 function getActiveRuns(): ActiveRun[] {
@@ -32,13 +44,14 @@ function getActiveRuns(): ActiveRun[] {
   `).all() as unknown as ActiveRun[];
 }
 
-export async function recoverCrons(dryRun = false): Promise<{
+export async function recoverCrons(dryRun = false, deps: RecoverCronsDeps = {}): Promise<{
   workflows: string[];
   registered: number;
   alreadyPresent: number;
   errors: Array<{ workflow: string; error: string }>;
 }> {
-  const activeRuns = getActiveRuns();
+  const activeRuns = (deps.getActiveRuns ?? getActiveRuns)();
+  const log = deps.log ?? console.log;
   
   // Group by workflow (multiple runs of same workflow = one ensure-crons call)
   const workflows = [...new Set(activeRuns.map(r => r.workflow_id))];
@@ -51,54 +64,56 @@ export async function recoverCrons(dryRun = false): Promise<{
   };
   
   if (dryRun) {
-    console.log('🔍 Dry run — no changes will be made\n');
-    console.log(`Found ${activeRuns.length} active run(s) across ${workflows.length} workflow(s):\n`);
+    log('🔍 Dry run — no changes will be made\n');
+    log(`Found ${activeRuns.length} active run(s) across ${workflows.length} workflow(s):\n`);
     for (const run of activeRuns) {
-      console.log(`   #${run.id.slice(0, 8)}  ${run.workflow_id}  ${run.task.slice(0, 50)}...`);
+      log(`   #${run.id.slice(0, 8)}  ${run.workflow_id}  ${run.task.slice(0, 50)}...`);
     }
-    console.log(`\nWould call ensure-crons for: ${workflows.join(', ')}`);
+    log(`\nWould call ensure-crons for: ${workflows.join(', ')}`);
     return result;
   }
   
-  console.log(`🔧 Recovering crons for ${workflows.length} workflow(s)...\n`);
+  log(`🔧 Recovering crons for ${workflows.length} workflow(s)...\n`);
   
   for (const workflowId of workflows) {
     try {
-      const workflowDir = resolveWorkflowDir(workflowId);
-      const workflow = await loadWorkflowSpec(workflowDir);
+      const workflowDir = (deps.resolveWorkflowDir ?? resolveWorkflowDir)(workflowId);
+      const workflow = await (deps.loadWorkflowSpec ?? loadWorkflowSpec)(workflowDir);
       const expectedCount = workflow.agents?.length || 0;
 
       // Check existing crons for logging context only — always call ensureWorkflowCrons
       // because it's idempotent and handles partial cron sets (e.g. 3 of 5 agents survived restart)
-      const cronResult = await listCronJobs();
+      const cronResult = await (deps.listCronJobs ?? listCronJobs)();
       const existingCrons = cronResult.jobs || [];
-      const workflowCrons = existingCrons.filter((c: { name: string }) => c.name?.startsWith(`antfarm/${workflowId}/`));
+      const workflowCrons = existingCrons.filter((c: CronJob) => c.name?.startsWith(`antfarm/${workflowId}/`));
+      const wasAlreadyPresent = workflowCrons.length === expectedCount;
 
-      if (workflowCrons.length === expectedCount) {
-        console.log(`   ⏭️  ${workflowId}: all ${expectedCount} cron(s) already present, reconciling...`);
+      if (wasAlreadyPresent) {
+        log(`   ⏭️  ${workflowId}: all ${expectedCount} cron(s) already present, reconciling...`);
+        result.alreadyPresent++;
       } else {
-        console.log(`   📝 ${workflowId}: ${workflowCrons.length}/${expectedCount} cron(s) present, reconciling...`);
+        log(`   📝 ${workflowId}: ${workflowCrons.length}/${expectedCount} cron(s) present, reconciling...`);
       }
 
       // Always reconcile — ensureWorkflowCrons is idempotent and will create missing,
       // update drifted, and remove orphaned crons
-      await ensureWorkflowCrons(workflow);
+      await (deps.ensureWorkflowCrons ?? ensureWorkflowCrons)(workflow);
 
       // Verify registration
-      const afterResult = await listCronJobs();
+      const afterResult = await (deps.listCronJobs ?? listCronJobs)();
       const afterCrons = afterResult.jobs || [];
-      const afterWorkflowCrons = afterCrons.filter((c: { name: string }) => c.name?.startsWith(`antfarm/${workflowId}/`));
+      const afterWorkflowCrons = afterCrons.filter((c: CronJob) => c.name?.startsWith(`antfarm/${workflowId}/`));
 
       if (afterWorkflowCrons.length === expectedCount) {
-        console.log(`   ✅ ${workflowId}: ${afterWorkflowCrons.length}/${expectedCount} cron(s) verified`);
-        result.registered++;
+        log(`   ✅ ${workflowId}: ${afterWorkflowCrons.length}/${expectedCount} cron(s) verified`);
+        if (!wasAlreadyPresent) result.registered++;
       } else {
-        console.log(`   ⚠️  ${workflowId}: ${afterWorkflowCrons.length}/${expectedCount} cron(s) after reconciliation`);
-        result.registered++;
+        log(`   ⚠️  ${workflowId}: ${afterWorkflowCrons.length}/${expectedCount} cron(s) after reconciliation`);
+        if (!wasAlreadyPresent) result.registered++;
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.log(`   ❌ ${workflowId}: ${msg}`);
+      log(`   ❌ ${workflowId}: ${msg}`);
       result.errors.push({ workflow: workflowId, error: msg });
     }
   }

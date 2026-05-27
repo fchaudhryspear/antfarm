@@ -200,6 +200,43 @@ describe("production gate schema hooks", () => {
     assert.equal(approvedRetry.next_route, "smoke_test");
   });
 
+  it("requires approval when a retry becomes side-effecting by default", () => {
+    const db = memoryDb();
+    const { item, run, rollbackPlan } = createFactoryFixture(db);
+    const firstAttempt = recordDeploymentEvent({
+      factoryItemId: item.id,
+      factoryRunId: run.id,
+      rollbackPlanId: rollbackPlan.id,
+      environment: "production",
+      status: "failed",
+      sideEffectingAction: false,
+    }, db);
+
+    assert.throws(
+      () => recordDeploymentEvent({
+        factoryItemId: item.id,
+        factoryRunId: run.id,
+        rollbackPlanId: rollbackPlan.id,
+        retryOfDeploymentEventId: firstAttempt.id,
+        environment: "production",
+        status: "succeeded",
+      }, db),
+      /auto-retry is not allowed/,
+    );
+
+    const approvedRetry = recordDeploymentEvent({
+      factoryItemId: item.id,
+      factoryRunId: run.id,
+      rollbackPlanId: rollbackPlan.id,
+      retryOfDeploymentEventId: firstAttempt.id,
+      environment: "production",
+      status: "succeeded",
+      manualApprovalId: "linear-approval-adp-391-retry",
+    }, db);
+    assert.equal(approvedRetry.side_effecting_action, 1);
+    assert.equal(approvedRetry.next_route, "smoke_test");
+  });
+
   it("blocks release when failures have no rollback plan", () => {
     const db = memoryDb();
     const item = createFactoryItem({ title: "No rollback plan", repo: "openclaw/antfarm" }, db);

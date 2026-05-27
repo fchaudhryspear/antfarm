@@ -30,6 +30,13 @@ describe("validateContractAndDispatch", () => {
     assert.equal(result.valid, true);
   });
 
+  it("returns a validation failure for non-string JSON expects entries", () => {
+    const result = validateContractAndDispatch("STATUS: ok", '["STATUS", 123]', false);
+
+    assert.equal(result.valid, false);
+    assert.match(result.reason, /must contain only strings/);
+  });
+
   it("does not apply the review schema to unrelated agents", () => {
     const result = validateStepOutput("TIER: 2", "pipeline-orchestrator_complexity-assessor");
     assert.equal(result.valid, true);

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,6 +38,22 @@ describe("package manifest release policy", () => {
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 
     assert.equal(pkg.scripts.start, "npm run build && node dist/cli/cli.js");
+  });
+
+  it("points the built package bin at an existing dist-relative target", () => {
+    const distPkg = JSON.parse(readFileSync(join(root, "dist", "package.json"), "utf8"));
+
+    assert.equal(distPkg.bin.antfarm, "cli/cli.js");
+    const binPath = join(root, "dist", distPkg.bin.antfarm);
+    assert.ok(existsSync(binPath), "dist package bin path should resolve");
+    assert.ok(statSync(binPath).mode & 0o111, "dist package bin target should be executable");
+  });
+
+  it("lets staging load-test JSON flush before process exit", () => {
+    const script = readFileSync(join(root, "scripts/gateway-staging-load-test.mjs"), "utf8");
+
+    assert.match(script, /process\.exitCode = result\.pass \? 0 : 1/);
+    assert.doesNotMatch(script, /process\.exit\(/);
   });
 
   it("declares the minimum Node runtime for unflagged node:sqlite", () => {

@@ -299,6 +299,8 @@ export async function runGatewayLoadTest(options: GatewayLoadTestOptions = {}): 
   let connectionDrops = 0;
   let failedRequests = 0;
   let teardownCount = 0;
+  let activeSessionsAfterTeardown = 0;
+  let heartbeatTimeoutPassed = false;
   const rssSamples: number[] = [process.memoryUsage().rss];
 
   try {
@@ -331,17 +333,29 @@ export async function runGatewayLoadTest(options: GatewayLoadTestOptions = {}): 
       await new Promise((resolve) => setTimeout(resolve, heartbeatIntervalMs));
     }
 
-    const staleDuringLoad = await requestJson<{ stale: number }>(gateway.port, "/maintenance/mark-stale", { method: "POST", body: "{}" });
-    if (staleDuringLoad.stale !== 0) {
-      blockers.push(`${staleDuringLoad.stale} active sessions went stale during sustained load`);
+    try {
+      const staleDuringLoad = await requestJson<{ stale: number }>(gateway.port, "/maintenance/mark-stale", { method: "POST", body: "{}" });
+      if (staleDuringLoad.stale !== 0) {
+        blockers.push(`${staleDuringLoad.stale} active sessions went stale during sustained load`);
+      }
+    } catch (error) {
+      failedRequests += 1;
+      connectionDrops += 1;
+      blockers.push(`stale maintenance probe failed: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    const staleProbe = await requestJson<{ id: string }>(gateway.port, "/sessions", { method: "POST", body: "{}" });
-    await new Promise((resolve) => setTimeout(resolve, heartbeatTimeoutMs + 25));
-    const staleAfterTimeout = await requestJson<{ stale: number }>(gateway.port, "/maintenance/mark-stale", { method: "POST", body: "{}" });
-    const heartbeatTimeoutPassed = staleAfterTimeout.stale >= 1;
-    if (!heartbeatTimeoutPassed) blockers.push("stale heartbeat probe did not transition to stale");
-    await requestJson(gateway.port, `/sessions/${staleProbe.id}`, { method: "DELETE" }).catch(() => undefined);
+    try {
+      const staleProbe = await requestJson<{ id: string }>(gateway.port, "/sessions", { method: "POST", body: "{}" });
+      await new Promise((resolve) => setTimeout(resolve, heartbeatTimeoutMs + 25));
+      const staleAfterTimeout = await requestJson<{ stale: number }>(gateway.port, "/maintenance/mark-stale", { method: "POST", body: "{}" });
+      heartbeatTimeoutPassed = staleAfterTimeout.stale >= 1;
+      if (!heartbeatTimeoutPassed) blockers.push("stale heartbeat probe did not transition to stale");
+      await requestJson(gateway.port, `/sessions/${staleProbe.id}`, { method: "DELETE" }).catch(() => undefined);
+    } catch (error) {
+      failedRequests += 1;
+      connectionDrops += 1;
+      blockers.push(`stale heartbeat probe failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     await boundedMap(sessionIds, maxParallelUnits, async (id) => {
       try {
@@ -352,9 +366,15 @@ export async function runGatewayLoadTest(options: GatewayLoadTestOptions = {}): 
       }
     });
 
-    const listed = await requestJson<{ sessions: SessionRecord[] }>(gateway.port, "/sessions");
-    const activeSessionsAfterTeardown = listed.sessions.filter((session) => session.status === "active").length;
-    if (activeSessionsAfterTeardown !== 0) blockers.push(`${activeSessionsAfterTeardown} sessions remained active after teardown`);
+    try {
+      const listed = await requestJson<{ sessions: SessionRecord[] }>(gateway.port, "/sessions");
+      activeSessionsAfterTeardown = listed.sessions.filter((session) => session.status === "active").length;
+      if (activeSessionsAfterTeardown !== 0) blockers.push(`${activeSessionsAfterTeardown} sessions remained active after teardown`);
+    } catch (error) {
+      failedRequests += 1;
+      connectionDrops += 1;
+      blockers.push(`final session listing failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     rssSamples.push(process.memoryUsage().rss);
     const rssStart = rssSamples[0]!;

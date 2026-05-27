@@ -521,10 +521,11 @@ export function recordDeploymentEvent(input: {
   startedAt?: string;
   completedAt?: string;
 }, db: DatabaseSync = getDb()): DeploymentEvent {
+  const sideEffectingAction = input.sideEffectingAction === false ? 0 : 1;
   if (input.retryOfDeploymentEventId) {
     const prior = db.prepare("SELECT * FROM deployment_events WHERE id = ?").get(input.retryOfDeploymentEventId) as DeploymentEvent | undefined;
     if (!prior) throw new Error("retryOfDeploymentEventId does not reference a deployment event");
-    if (prior.side_effecting_action === 1 && !input.manualApprovalId) {
+    if ((prior.side_effecting_action === 1 || sideEffectingAction === 1) && !input.manualApprovalId) {
       throw new Error("Side-effecting deployment retries require manual approval; auto-retry is not allowed");
     }
   }
@@ -554,7 +555,7 @@ export function recordDeploymentEvent(input: {
     input.commitSha ?? null,
     input.version ?? null,
     input.status,
-    input.sideEffectingAction === false ? 0 : 1,
+    sideEffectingAction,
     input.manualApprovalId ?? null,
     failureCause,
     nextRoute,

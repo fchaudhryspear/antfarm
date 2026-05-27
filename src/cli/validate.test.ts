@@ -55,3 +55,40 @@ describe("validateWorkflowDefinition dependency graph", () => {
     assert.ok(result.errors.some((error) => error.message.includes("Circular dependency")));
   });
 });
+
+describe("validateWorkflowDefinition output contracts", () => {
+  it("rejects input_template references to missing steps", () => {
+    const result = validateWorkflowDefinition({
+      id: "test-missing-template-step",
+      name: "Test Missing Template Step",
+      steps: [
+        {
+          id: "consumer",
+          agent: "a",
+          input_template: "Use {{steps.missing.outputs.value}}",
+        },
+      ],
+    });
+
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.message.includes('References non-existent step "missing"')));
+  });
+
+  it("rejects input_template references to undeclared outputs", () => {
+    const result = validateWorkflowDefinition({
+      id: "test-missing-template-output",
+      name: "Test Missing Template Output",
+      steps: [
+        { id: "producer", agent: "a", outputs: { summary: "SUMMARY" } },
+        {
+          id: "consumer",
+          agent: "b",
+          input_template: "Use {{steps.producer.outputs.value}}",
+        },
+      ],
+    });
+
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.message.includes('Step "producer" does not declare output "value"')));
+  });
+});

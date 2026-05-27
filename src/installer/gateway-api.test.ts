@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createAgentCronJob, listCronJobs } from "./gateway-api.js";
+import { createAgentCronJob, listCronJobs, sendSessionMessage, spawnAgentSession } from "./gateway-api.js";
 
 const originalConfigPath = process.env.OPENCLAW_CONFIG_PATH;
 const originalGatewayPassword = process.env.OPENCLAW_GATEWAY_PASSWORD;
@@ -91,5 +91,49 @@ describe("createAgentCronJob CLI fallback", () => {
 
     assert.equal(result.ok, false);
     assert.match(result.error ?? "", /cannot preserve schedule\.anchorMs/);
+  });
+});
+
+describe("spawnAgentSession gateway errors", () => {
+  it("returns a tool-level gateway error without falling back to CLI", async () => {
+    const dir = await makeTempDir();
+    process.env.OPENCLAW_CONFIG_PATH = path.join(dir, "openclaw.json5");
+    await fs.writeFile(process.env.OPENCLAW_CONFIG_PATH, "{ gateway: { port: 19876 } }\n", "utf-8");
+
+    globalThis.fetch = (async () => {
+      return new Response(JSON.stringify({ ok: false, error: { message: "bad agent" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const result = await spawnAgentSession({
+      agentId: "missing-agent",
+      task: "run now",
+    });
+
+    assert.deepEqual(result, { ok: false, error: "bad agent" });
+  });
+});
+
+describe("sendSessionMessage gateway errors", () => {
+  it("returns a tool-level gateway error without falling back to CLI", async () => {
+    const dir = await makeTempDir();
+    process.env.OPENCLAW_CONFIG_PATH = path.join(dir, "openclaw.json5");
+    await fs.writeFile(process.env.OPENCLAW_CONFIG_PATH, "{ gateway: { port: 19876 } }\n", "utf-8");
+
+    globalThis.fetch = (async () => {
+      return new Response(JSON.stringify({ ok: false, error: { message: "session missing" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const result = await sendSessionMessage({
+      sessionKey: "agent:missing:main",
+      message: "continue",
+    });
+
+    assert.deepEqual(result, { ok: false, error: "session missing" });
   });
 });

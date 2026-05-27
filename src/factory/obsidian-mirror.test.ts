@@ -100,4 +100,25 @@ describe("obsidian factory mirror", () => {
     assert.doesNotMatch(note, /artifactsecret/);
     assert.doesNotMatch(result.notePath, /abc123/);
   });
+
+  it("redacts PII and finance identifiers before writing markdown", () => {
+    const db = memoryDb();
+    const outputRoot = fs.mkdtempSync(path.join(os.tmpdir(), "obsidian-mirror-"));
+    const item = createFactoryItem({
+      id: "fi_sensitive_content",
+      title: "Sensitive mirror content",
+      description: "Contact person@example.com for acct 1234567890 and SSN 123-45-6789.",
+    }, db);
+
+    const result = writeObsidianFactoryMirror({ factoryItemId: item.id, outputRoot }, db);
+    const note = fs.readFileSync(result.notePath, "utf-8");
+
+    assert.equal(result.redactionStatus, "redacted");
+    assert.match(note, /\[REDACTED_EMAIL]/);
+    assert.match(note, /\[REDACTED_ACCOUNT_NUMBER]/);
+    assert.match(note, /\[REDACTED_SSN]/);
+    assert.doesNotMatch(note, /person@example\.com/);
+    assert.doesNotMatch(note, /1234567890/);
+    assert.doesNotMatch(note, /123-45-6789/);
+  });
 });

@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { recoverCrons } from "./cron-recovery.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -183,6 +184,44 @@ describe("dashboard CLI", () => {
 });
 
 describe("cron-recovery CLI", () => {
+  it("reports workflow cron sets that were already present", async () => {
+    let ensureCalls = 0;
+
+    const result = await recoverCrons(false, {
+      getActiveRuns: () => [{
+        id: "run-cron-recovery-test",
+        workflow_id: "test-workflow",
+        status: "running",
+        task: "recover crons",
+        updated_at: new Date("2026-05-26T12:00:00.000Z").toISOString(),
+      }],
+      resolveWorkflowDir: () => "/unused",
+      loadWorkflowSpec: async () => ({
+        id: "test-workflow",
+        agents: [
+          { id: "lead", workspace: { baseDir: "/unused", files: {} } },
+          { id: "developer", workspace: { baseDir: "/unused", files: {} } },
+        ],
+        steps: [],
+      }),
+      listCronJobs: async () => ({
+        jobs: [
+          { name: "antfarm/test-workflow/lead" },
+          { name: "antfarm/test-workflow/developer" },
+        ],
+      }),
+      ensureWorkflowCrons: async () => {
+        ensureCalls++;
+      },
+      log: () => {},
+    });
+
+    assert.equal(ensureCalls, 1);
+    assert.equal(result.alreadyPresent, 1);
+    assert.equal(result.registered, 0);
+    assert.deepEqual(result.errors, []);
+  });
+
   it("reads active runs without requiring the sqlite3 executable", () => {
     const home = mkdtempSync(join(tmpdir(), "antfarm-cli-cron-"));
     const emptyPath = join(home, "empty-bin");
