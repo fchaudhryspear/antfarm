@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { buildWorkPrompt, cronNeedsRecreate } from "./agent-cron.js";
+import { buildPollingPrompt, buildWorkPrompt, cronNeedsRecreate } from "./agent-cron.js";
 
 const AGENT_CRON_SOURCE = path.resolve(import.meta.dirname, "../../src/installer/agent-cron.ts");
 const GATEWAY_API_SOURCE = path.resolve(import.meta.dirname, "../../src/installer/gateway-api.ts");
@@ -20,6 +20,16 @@ describe("buildWorkPrompt", () => {
     assert.doesNotMatch(prompt, /trap .*EXIT/);
     assert.doesNotMatch(prompt, /grep -oP/);
     assert.doesNotMatch(prompt, /Session timeout/);
+  });
+});
+
+describe("buildPollingPrompt", () => {
+  it("stops before claiming when status is running or done", () => {
+    const prompt = buildPollingPrompt("feature-dev", "developer");
+
+    assert.match(prompt, /If output is "running" or "done", reply HEARTBEAT_OK and stop\. Do NOT call step claim\./);
+    assert.match(prompt, /If output is "none", proceed to Step 3\./);
+    assert.match(prompt, /Step 3 — If status check returned "none", claim the step:/);
   });
 });
 

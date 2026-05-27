@@ -204,7 +204,7 @@ Step 2 — Claim the step ONLY if peek returned HAS_WORK:
 \`\`\`
 node ${cli} step status "${fullAgentId}"
 \`\`\`
-If output is "running", reply HEARTBEAT_OK and stop. Do NOT call step claim. This prevents double-claiming when two cron ticks fire simultaneously.
+If output is "running" or "done", reply HEARTBEAT_OK and stop. Do NOT call step claim. This prevents double-claiming or re-claiming completed work when two cron ticks fire simultaneously.
 If output is "none", proceed to Step 3.
 
 Step 3 — If status check returned "none", claim the step:
