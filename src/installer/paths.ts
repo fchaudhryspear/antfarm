@@ -11,7 +11,7 @@ export function resolveBundledWorkflowsDir(): string {
 }
 
 export function resolveBundledWorkflowDir(workflowId: string): string {
-  return path.join(resolveBundledWorkflowsDir(), workflowId);
+  return resolveWorkflowChildDir(resolveBundledWorkflowsDir(), workflowId);
 }
 
 export function resolveOpenClawStateDir(): string {
@@ -39,7 +39,7 @@ export function resolveWorkflowRoot(): string {
 }
 
 export function resolveWorkflowDir(workflowId: string): string {
-  return path.join(resolveWorkflowRoot(), workflowId);
+  return resolveWorkflowChildDir(resolveWorkflowRoot(), workflowId);
 }
 
 export function resolveWorkflowWorkspaceRoot(): string {
@@ -47,7 +47,7 @@ export function resolveWorkflowWorkspaceRoot(): string {
 }
 
 export function resolveWorkflowWorkspaceDir(workflowId: string): string {
-  return path.join(resolveWorkflowWorkspaceRoot(), workflowId);
+  return resolveWorkflowChildDir(resolveWorkflowWorkspaceRoot(), workflowId);
 }
 
 export function resolveRunRoot(): string {
@@ -57,4 +57,18 @@ export function resolveRunRoot(): string {
 export function resolveAntfarmCli(): string {
   // From dist/installer/paths.js -> ../../dist/cli/cli.js
   return path.resolve(__dirname, "..", "cli", "cli.js");
+}
+
+function resolveWorkflowChildDir(root: string, workflowId: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(workflowId)) {
+    throw new Error(`Invalid workflow id "${workflowId}": use letters, numbers, dots, underscores, or hyphens only`);
+  }
+
+  const resolvedRoot = path.resolve(root);
+  const resolvedChild = path.resolve(resolvedRoot, workflowId);
+  const relative = path.relative(resolvedRoot, resolvedChild);
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Invalid workflow id "${workflowId}": resolved path escapes workflow root`);
+  }
+  return resolvedChild;
 }
