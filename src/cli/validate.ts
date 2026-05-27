@@ -106,17 +106,29 @@ function buildInputGraph(steps: Step[]): Record<string, Array<{ step: string; ou
   
   for (const step of steps) {
     const refs: Array<{ step: string; output: string }> = [];
+    const seenRefs = new Set<string>();
+    const addRefs = (text: string) => {
+      for (const ref of extractStepOutputRefs(text)) {
+        const key = `${ref.step}.${ref.output}`;
+        if (!seenRefs.has(key)) {
+          seenRefs.add(key);
+          refs.push({ step: ref.step, output: ref.output });
+        }
+      }
+    };
     
-    // Check input template
+    // Check input fields
     if (step.input) {
-      const inputRefs = extractStepOutputRefs(step.input);
-      refs.push(...inputRefs.map(r => ({ step: r.step, output: r.output })));
+      addRefs(step.input);
+    }
+
+    if (step.input_template) {
+      addRefs(step.input_template);
     }
     
     // Check condition
     if (step.condition) {
-      const conditionRefs = extractStepOutputRefs(step.condition);
-      refs.push(...conditionRefs.map(r => ({ step: r.step, output: r.output })));
+      addRefs(step.condition);
     }
     
     graph[step.id] = refs;
