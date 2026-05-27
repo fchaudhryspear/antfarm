@@ -445,11 +445,10 @@ async function main() {
     }
 
     if (action === "status") {
-      const status = getMedicStatus();
-      const cronInstalled = await isMedicCronInstalled();
+      const status = await getMedicStatus();
 
       console.log("Antfarm Medic");
-      console.log(`  Cron: ${cronInstalled ? "installed (every 5 min)" : "not installed"}`);
+      console.log(`  Cron: ${status.installed ? "installed (every 5 min)" : "not installed"}`);
 
       if (status.lastCheck) {
         const ago = Math.round((Date.now() - new Date(status.lastCheck.checkedAt).getTime()) / 60000);

@@ -13,6 +13,7 @@ import {
   checkOrphanedCrons,
   type MedicFinding,
 } from "./checks.js";
+import { isMedicCronInstalled } from "./medic-cron.js";
 import crypto from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -240,7 +241,12 @@ export interface MedicStatus {
   recentActions: number; // actions taken in last 24h
 }
 
-export function getMedicStatus(db: DatabaseSync = getDb()): MedicStatus {
+export async function getMedicStatus(
+  db: DatabaseSync = getDb(),
+  installed = isMedicCronInstalled(),
+): Promise<MedicStatus> {
+  const cronInstalled = await installed.catch(() => false);
+
   try {
     ensureMedicTables(db);
 
@@ -255,7 +261,7 @@ export function getMedicStatus(db: DatabaseSync = getDb()): MedicStatus {
     `).get() as { checks: number; issues: number; actions: number };
 
     return {
-      installed: true,
+      installed: cronInstalled,
       lastCheck: last ? {
         checkedAt: last.checked_at,
         summary: last.summary,
@@ -267,7 +273,7 @@ export function getMedicStatus(db: DatabaseSync = getDb()): MedicStatus {
       recentActions: stats.actions,
     };
   } catch {
-    return { installed: false, lastCheck: null, recentChecks: 0, recentIssues: 0, recentActions: 0 };
+    return { installed: cronInstalled, lastCheck: null, recentChecks: 0, recentIssues: 0, recentActions: 0 };
   }
 }
 

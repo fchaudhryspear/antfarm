@@ -152,7 +152,7 @@ function serveHTML(res: http.ServerResponse) {
 }
 
 export function startDashboard(port = 3333, host = DEFAULT_DASHBOARD_HOST): http.Server {
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
     const p = url.pathname;
 
@@ -191,7 +191,7 @@ export function startDashboard(port = 3333, host = DEFAULT_DASHBOARD_HOST): http
 
     // Medic API
     if (p === "/api/medic/status") {
-      return json(res, getMedicStatus());
+      return json(res, await getMedicStatus());
     }
 
     if (p === "/api/medic/checks") {

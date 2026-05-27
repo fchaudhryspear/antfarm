@@ -155,10 +155,23 @@ describe("getMedicStatus", () => {
       "INSERT INTO medic_checks (id, checked_at, issues_found, actions_taken, summary, details) VALUES (?, ?, ?, ?, ?, ?)",
     ).run("recent", recent, 2, 3, "recent", "[]");
 
-    const status = getMedicStatus(db);
+    const status = await getMedicStatus(db, Promise.resolve(true));
     assert.equal(status.recentChecks, 1);
     assert.equal(status.recentIssues, 2);
     assert.equal(status.recentActions, 3);
+    db.close();
+  });
+
+  it("reports not installed when medic tables exist but the cron is absent", async () => {
+    const db = new DatabaseSync(":memory:");
+    const { ensureMedicTables, getMedicStatus } = await import("./medic.js");
+    ensureMedicTables(db);
+
+    const status = await getMedicStatus(db, Promise.resolve(false));
+
+    assert.equal(status.installed, false);
+    assert.equal(status.lastCheck, null);
+    assert.equal(status.recentChecks, 0);
     db.close();
   });
 });
