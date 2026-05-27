@@ -491,7 +491,7 @@ export async function sendSessionMessage(params: {
     if (response.ok) {
       const result = await response.json();
       if (result.ok) return { ok: true };
-      // HTTP succeeded but tool returned error — fall through to CLI
+      return { ok: false, error: result.error?.message ?? "Unknown error" };
     }
     // Transient or error — fall through to CLI fallback
   } catch {
