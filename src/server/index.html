@@ -307,7 +307,7 @@ function countStatus(items, status) { return (items || []).filter(item => item.s
 async function loadFactoryDashboard() {
   currentWf = null;
   document.getElementById('wf-select').value = '';
-  const data = await fetchJSON('/api/factory/dashboard');
+  const data = await fetchJSON('/api/factory/dashboard?tenant_id=flobase');
   renderFactoryDashboard(data);
 }
 
@@ -358,7 +358,7 @@ function renderFactoryDashboard(data) {
 
   board.innerHTML = `<div class="factory-dashboard">
     <section class="factory-band">
-      <h2>Operator Dashboard</h2>
+      <h2>Operator Dashboard · ${esc(data.tenantId || 'tenant')}</h2>
       <div class="factory-metrics">
         <div class="metric"><div class="metric-value">${items.length}</div><div class="metric-label">Factory Items</div></div>
         <div class="metric"><div class="metric-value">${activeRuns.length}</div><div class="metric-label">Active Runs</div></div>
