@@ -2,6 +2,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 import { resolveBundledWorkflowsDir } from "../installer/paths.js";
 import YAML from "yaml";
@@ -15,6 +16,10 @@ import {
   type FactoryItem,
   type FactoryRun,
 } from "../factory/store.js";
+import {
+  getDashboardSessionByToken,
+  type DashboardSession,
+} from "../factory/dashboard-isolation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
@@ -77,15 +82,20 @@ function safeTenantId(value?: string | null): string | null {
   return tenantId;
 }
 
-function parseAuthorizedTenants(value?: string | null): string[] {
-  return (value ?? "")
-    .split(",")
-    .map((tenant) => safeTenantId(tenant))
-    .filter((tenant): tenant is string => tenant !== null);
-}
-
 function isFounderRole(actorRole?: string): boolean {
   return FOUNDER_ROLES.has((actorRole ?? "").trim().toLowerCase());
+}
+
+function bearerToken(req: http.IncomingMessage): string | null {
+  const header = req.headers.authorization;
+  const value = Array.isArray(header) ? header[0] : header;
+  const match = value?.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+function dashboardSession(req: http.IncomingMessage, db: DatabaseSync): DashboardSession | null {
+  const token = bearerToken(req);
+  return token ? getDashboardSessionByToken(db, token) : null;
 }
 
 function scopeStatus(scope: FactoryDashboardScope): { status: 200 | 400 | 403 | 404; reason?: string; tenantId?: string } {
@@ -278,7 +288,7 @@ function serveHTML(res: http.ServerResponse) {
   res.end(fs.readFileSync(filePath, "utf-8"));
 }
 
-export function startDashboard(port = 3333, host = DEFAULT_DASHBOARD_HOST): http.Server {
+export function startDashboard(port = 3333, host = DEFAULT_DASHBOARD_HOST, dashboardDb?: DatabaseSync): http.Server {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
     const p = url.pathname;
@@ -313,25 +323,31 @@ export function startDashboard(port = 3333, host = DEFAULT_DASHBOARD_HOST): http
     }
 
     if (p === "/api/factory/tenant-metadata") {
-      const body = getFactoryTenantMetadata(getDb(), {
+      const db = dashboardDb ?? getDb();
+      const session = dashboardSession(req, db);
+      if (!session) return json(res, { status: 401, error: "dashboard_session_required" }, 401);
+      const body = getFactoryTenantMetadata(db, {
         tenantId: url.searchParams.get("tenant_id") ?? undefined,
-        actorRole: url.searchParams.get("actor_role") ?? undefined,
-        authorizedTenants: parseAuthorizedTenants(url.searchParams.get("authorized_tenants")),
+        actorRole: session.actorRole,
+        authorizedTenants: session.authorizedTenants,
       });
       return json(res, body, body.status);
     }
 
     if (p === "/api/factory/dashboard") {
+      const db = dashboardDb ?? getDb();
+      const session = dashboardSession(req, db);
+      if (!session) return json(res, { status: 401, error: "dashboard_session_required" }, 401);
       if (url.searchParams.get("scope") === "aggregate") {
-        const body = getFactoryDashboardAggregate(getDb(), {
-          actorRole: url.searchParams.get("actor_role") ?? undefined,
+        const body = getFactoryDashboardAggregate(db, {
+          actorRole: session.actorRole,
         });
         return json(res, body, body.status);
       }
-      const body = getFactoryDashboardSnapshot(getDb(), {
+      const body = getFactoryDashboardSnapshot(db, {
         tenantId: url.searchParams.get("tenant_id") ?? undefined,
-        actorRole: url.searchParams.get("actor_role") ?? undefined,
-        authorizedTenants: parseAuthorizedTenants(url.searchParams.get("authorized_tenants")),
+        actorRole: session.actorRole,
+        authorizedTenants: session.authorizedTenants,
       });
       return json(res, body, body.status);
     }

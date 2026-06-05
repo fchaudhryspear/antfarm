@@ -35,6 +35,39 @@ export function createDashboardSession(input: {
   return { id, actor: input.actor, actorRole: input.actorRole, authorizedTenants: input.authorizedTenants };
 }
 
+export function getDashboardSessionByToken(db: DatabaseSync, token: string): DashboardSession | null {
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const row = db.prepare(`
+    SELECT id, actor, actor_role, authorized_tenants_json, expires_at
+    FROM factory_dashboard_sessions
+    WHERE token_hash = ?
+  `).get(tokenHash) as {
+    id: string;
+    actor: string;
+    actor_role: string;
+    authorized_tenants_json: string;
+    expires_at: string;
+  } | undefined;
+  if (!row) return null;
+  if (Date.parse(row.expires_at) <= Date.now()) return null;
+
+  let authorizedTenants: string[];
+  try {
+    const parsed = JSON.parse(row.authorized_tenants_json);
+    if (!Array.isArray(parsed) || parsed.some((tenant) => typeof tenant !== "string")) return null;
+    authorizedTenants = parsed;
+  } catch {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    actor: row.actor,
+    actorRole: row.actor_role,
+    authorizedTenants,
+  };
+}
+
 export function enforceTenantRead(input: {
   db: DatabaseSync;
   session: DashboardSession;

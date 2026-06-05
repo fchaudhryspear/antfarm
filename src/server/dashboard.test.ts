@@ -1,8 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import { once } from "node:events";
 import { DatabaseSync } from "node:sqlite";
 import { migrateDb } from "../db.js";
+import { createDashboardSession } from "../factory/dashboard-isolation.js";
 import {
   approveFactoryGate,
   createOrLinkFactoryItem,
@@ -26,6 +28,23 @@ function memoryDb(): DatabaseSync {
   db.exec("PRAGMA foreign_keys=ON");
   migrateDb(db);
   return db;
+}
+
+async function requestJson(
+  server: http.Server,
+  path: string,
+  token?: string,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  if (!server.listening) await once(server, "listening");
+  const address = server.address();
+  assert(address && typeof address === "object");
+  const response = await fetch(`http://127.0.0.1:${address.port}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  return {
+    status: response.status,
+    body: await response.json() as Record<string, unknown>,
+  };
 }
 
 describe("factory operator dashboard snapshot", () => {
@@ -227,5 +246,72 @@ describe("factory operator dashboard snapshot", () => {
     });
     assert.equal(deniedMetadata.status, 404);
     assert.equal(deniedMetadata.error, "tenant_not_authorized");
+  });
+
+  it("rejects forged dashboard auth query params at the HTTP boundary", async () => {
+    const db = memoryDb();
+    const flobase = createOrLinkFactoryItem({
+      tenantId: "flobase",
+      title: "Flobase tenant item",
+      repo: "fchaudhryspear/antfarm",
+      source: "linear",
+      priority: "P2",
+      operator: "simon",
+      externalRef: "ADP-429-HTTP-FLOBASE",
+    }, db);
+    createFactoryRun({
+      tenantId: "flobase",
+      factoryItemId: flobase.item.id,
+      workflowId: "agent-swarm-v3-dashboard",
+      status: "running",
+      budget: { max_usd: 10 },
+    }, db);
+    const credologi = createOrLinkFactoryItem({
+      tenantId: "credologi",
+      title: "Credologi tenant item",
+      repo: "fchaudhryspear/antfarm",
+      source: "linear",
+      priority: "P2",
+      operator: "simon",
+      externalRef: "ADP-429-HTTP-CREDOLOGI",
+    }, db);
+    createFactoryRun({
+      tenantId: "credologi",
+      factoryItemId: credologi.item.id,
+      workflowId: "agent-swarm-v3-dashboard",
+      status: "running",
+      budget: { max_usd: 90 },
+    }, db);
+    createDashboardSession({
+      db,
+      actor: "simon",
+      actorRole: "operator",
+      authorizedTenants: ["flobase"],
+      token: "flobase-token",
+    });
+
+    const server = startDashboard(0, "127.0.0.1", db);
+    try {
+      const forgedAggregate = await requestJson(server, "/api/factory/dashboard?scope=aggregate&actor_role=founder");
+      assert.equal(forgedAggregate.status, 401);
+      assert.equal(forgedAggregate.body.error, "dashboard_session_required");
+
+      const forgedTenant = await requestJson(
+        server,
+        "/api/factory/dashboard?tenant_id=credologi&actor_role=operator&authorized_tenants=credologi",
+      );
+      assert.equal(forgedTenant.status, 401);
+      assert.equal(forgedTenant.body.error, "dashboard_session_required");
+
+      const forgedTenantWithValidSession = await requestJson(
+        server,
+        "/api/factory/dashboard?tenant_id=credologi&actor_role=founder&authorized_tenants=credologi",
+        "flobase-token",
+      );
+      assert.equal(forgedTenantWithValidSession.status, 404);
+      assert.equal(forgedTenantWithValidSession.body.error, "tenant_not_authorized");
+    } finally {
+      server.close();
+    }
   });
 });
