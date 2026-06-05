@@ -1,13 +1,33 @@
 # ADP-429 Dashboard Aggregate Behavior
 
-Date: 2026-05-30
+Date: 2026-06-05
 
 ## Route Contract
 
-Tenant dashboard reads are tenant-scoped by default:
+Dashboard factory routes require a trusted server-side dashboard session:
+
+```http
+Authorization: Bearer <dashboard-session-token>
+```
+
+The token is resolved against `factory_dashboard_sessions` by stored token hash. The resulting server-side session supplies `actorRole` and `authorizedTenants`.
+
+The dashboard API does not treat query parameters as authorization facts. `actor_role` and `authorized_tenants` query parameters are ignored for authorization decisions.
+
+Missing or invalid dashboard sessions fail closed:
+
+```json
+{
+  "status": 401,
+  "error": "dashboard_session_required"
+}
+```
+
+Tenant dashboard reads are tenant-scoped by default, with tenant ID used only as a resource selector:
 
 ```http
 GET /api/factory/dashboard?tenant_id=flobase
+Authorization: Bearer <dashboard-session-token>
 ```
 
 Missing tenant scope fails closed:
@@ -31,7 +51,8 @@ Unauthorized tenant reads fail as not found to avoid tenant existence disclosure
 Cross-tenant aggregate metadata is explicit and founder-only:
 
 ```http
-GET /api/factory/dashboard?scope=aggregate&actor_role=founder
+GET /api/factory/dashboard?scope=aggregate
+Authorization: Bearer <founder-dashboard-session-token>
 ```
 
 Non-founder aggregate requests fail closed:
@@ -47,6 +68,7 @@ Safe tenant metadata exposure is available separately:
 
 ```http
 GET /api/factory/tenant-metadata?tenant_id=flobase
+Authorization: Bearer <dashboard-session-token>
 ```
 
 The tenant metadata route returns only:
@@ -71,20 +93,25 @@ Tenant-scoped dashboard responses include queue, active runs, item details, time
 Commands:
 
 ```bash
+npm ci
 npm run build
 node --test dist/server/dashboard.test.js
+git diff --check
 ```
 
 Results:
 
 ```text
-tests 3
-pass 3
+tests 4
+pass 4
 fail 0
 ```
 
 The targeted tests prove:
 
+- forged `GET /api/factory/dashboard?scope=aggregate&actor_role=founder` without a trusted Bearer session returns `401 dashboard_session_required`
+- forged `GET /api/factory/dashboard?tenant_id=credologi&actor_role=operator&authorized_tenants=credologi` without a trusted Bearer session returns `401 dashboard_session_required`
+- forged `actor_role=founder&authorized_tenants=credologi` query params cannot expand a valid flobase operator session and return `404 tenant_not_authorized`
 - missing tenant scope returns `400`
 - unauthorized tenant read returns `404`
 - non-founder aggregate returns `403`
