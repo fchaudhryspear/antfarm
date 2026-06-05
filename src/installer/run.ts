@@ -1,4 +1,7 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { loadWorkflowSpec } from "./workflow-spec.js";
 import { resolveWorkflowDir } from "./paths.js";
 import { getDb, nextRunNumber } from "../db.js";
@@ -6,6 +9,13 @@ import { logger } from "../lib/logger.js";
 import { ensureWorkflowCrons, resumeWorkflowCrons } from "./agent-cron.js";
 import { emitEvent } from "./events.js";
 import { triggerImmediateStepEnqueue } from "./step-ops.js";
+import {
+  createFactoryItem,
+  createFactoryRun,
+  recordFactoryArtifact,
+  recordFactoryContextPack,
+  appendFactoryEvent,
+} from "../factory/store.js";
 
 function validateDependencyGraph(steps: Array<{ id: string; depends_on?: string | string[] }>): void {
   const stepIds = new Set(steps.map(s => s.id));
@@ -87,6 +97,7 @@ export async function runWorkflow(params: {
     ...(params.focusAreas && { focus_areas: params.focusAreas }),
     ...params.context, // Bug #25 fix: merge --context KEY=value pairs into initialContext
   };
+  const tenantId = initialContext.tenant_id?.trim() || initialContext.company?.trim() || undefined;
 
   // Preflight validation: only workflow-declared empty context placeholders are required.
   const emptyRequired = getEmptyRequiredContextVars(workflow.context, initialContext);
@@ -101,11 +112,34 @@ export async function runWorkflow(params: {
 
   db.exec("BEGIN");
   try {
+    const conflictingTenantRun = tenantId
+      ? db.prepare(`
+        SELECT id, tenant_id FROM runs
+        WHERE workflow_id = ? AND status = 'running'
+          AND tenant_id IS NOT NULL
+          AND tenant_id != ?
+        LIMIT 1
+      `).get(workflow.id, tenantId) as { id: string; tenant_id: string | null } | undefined
+      : db.prepare(`
+        SELECT id, tenant_id FROM runs
+        WHERE workflow_id = ? AND status = 'running'
+          AND tenant_id IS NOT NULL
+        LIMIT 1
+      `).get(workflow.id) as { id: string; tenant_id: string | null } | undefined;
+    if (conflictingTenantRun) {
+      throw new Error(
+        `Cannot start workflow run: workflow "${workflow.id}" already has a running run for a different tenant (${conflictingTenantRun.tenant_id ?? "legacy/null"}).`
+      );
+    }
+
     const notifyUrl = params.notifyUrl ?? workflow.notifications?.url ?? null;
     const insertRun = db.prepare(
       "INSERT INTO runs (id, run_number, workflow_id, task, status, context, notify_url, created_at, updated_at) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)"
     );
     insertRun.run(runId, runNumber, workflow.id, params.taskTitle, JSON.stringify(initialContext), notifyUrl, now, now);
+    if (tenantId) {
+      db.prepare("UPDATE runs SET tenant_id = ? WHERE id = ?").run(tenantId, runId);
+    }
 
     const insertStep = db.prepare(
       "INSERT INTO steps (id, run_id, step_id, agent_id, step_index, input_template, expects, status, max_retries, type, loop_config, depends_on, timeout_minutes, condition, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -114,9 +148,13 @@ export async function runWorkflow(params: {
     validateDependencyGraph(workflow.steps);
 
     // Cancel stale runs for this workflow — prevent claim competition (Bug #34)
-    const staleRuns = db.prepare(
-      "SELECT id FROM runs WHERE workflow_id = ? AND status = 'running' AND id != ?"
-    ).all(workflow.id, runId) as Array<{ id: string }>;
+    const staleRuns = tenantId
+      ? db.prepare(
+        "SELECT id FROM runs WHERE workflow_id = ? AND status = 'running' AND id != ? AND (tenant_id = ? OR tenant_id IS NULL)"
+      ).all(workflow.id, runId, tenantId) as Array<{ id: string }>
+      : db.prepare(
+        "SELECT id FROM runs WHERE workflow_id = ? AND status = 'running' AND id != ? AND tenant_id IS NULL"
+      ).all(workflow.id, runId) as Array<{ id: string }>;
 
     if (staleRuns.length > 0) {
       console.warn(`[antfarm] Cancelling ${staleRuns.length} stale run(s) for ${workflow.id}: ${staleRuns.map(r => r.id).join(', ')}`);
@@ -152,6 +190,87 @@ export async function runWorkflow(params: {
       const timeoutMinutes = step.timeout_minutes ?? null;
       const condition = step.condition ?? null;
       insertStep.run(stepUuid, runId, step.id, agentId, i, step.input, step.expects, status, maxRetries, stepType, loopConfig, depsJson, timeoutMinutes, condition, now, now);
+      if (tenantId) {
+        db.prepare("UPDATE steps SET tenant_id = ? WHERE id = ?").run(tenantId, stepUuid);
+      }
+    }
+
+    if (tenantId) {
+      const repoName = initialContext.repo_name || params.repoPath || null;
+      const item = createFactoryItem({
+        tenantId,
+        title: params.taskTitle,
+        description: `Antfarm workflow dispatch: ${workflow.id}`,
+        repo: repoName ?? undefined,
+        source: "workflow.run",
+        priority: "normal",
+        requestedBy: "antfarm-cli",
+        owner: tenantId,
+      }, db);
+      const factoryRun = createFactoryRun({
+        tenantId,
+        factoryItemId: item.id,
+        workflowId: workflow.id,
+        antfarmRunId: runId,
+        status: "running",
+        startedAt: now,
+        modelPolicy: workflow.polling?.model,
+        budget: { force_tier: initialContext.force_tier ?? null },
+      }, db);
+
+      const manifest = {
+        schema: "antfarm_dispatch_context_pack_v1",
+        tenant_id: tenantId,
+        workflow_id: workflow.id,
+        run_id: runId,
+        factory_item_id: item.id,
+        factory_run_id: factoryRun.id,
+        repo_name: initialContext.repo_name ?? null,
+        repo_path: params.repoPath ?? null,
+        scope: initialContext.scope ?? null,
+        focus_areas: initialContext.focus_areas ?? null,
+        created_at: now,
+        redaction_ruleset_version: tenantId === "flobase" ? "finance_v1" : "default_v1",
+      };
+      const manifestJson = JSON.stringify(manifest, null, 2) + "\n";
+      const checksum = crypto.createHash("sha256").update(manifestJson).digest("hex");
+      const packDir = path.join(os.homedir(), ".openclaw", "antfarm", "context-packs", tenantId, runId);
+      fs.mkdirSync(packDir, { recursive: true });
+      const manifestPath = path.join(packDir, "manifest.json");
+      fs.writeFileSync(manifestPath, manifestJson, "utf-8");
+      const contextPack = recordFactoryContextPack({
+        tenantId,
+        factoryItemId: item.id,
+        factoryRunId: factoryRun.id,
+        stage: "dispatch",
+        agentRole: "workflow-runtime",
+        path: manifestPath,
+        checksum,
+        manifest,
+        redactionRulesetVersion: manifest.redaction_ruleset_version,
+      }, db);
+      recordFactoryArtifact({
+        tenantId,
+        factoryItemId: item.id,
+        factoryRunId: factoryRun.id,
+        artifactType: "dispatch_context_pack",
+        title: "Workflow dispatch context pack",
+        pathOrUrl: manifestPath,
+        checksum,
+      }, db);
+      appendFactoryEvent({
+        tenantId,
+        factoryItemId: item.id,
+        factoryRunId: factoryRun.id,
+        eventType: "workflow.dispatched",
+        actor: "antfarm-runtime",
+        payload: {
+          workflow_id: workflow.id,
+          run_id: runId,
+          context_pack_id: contextPack.id,
+          checksum,
+        },
+      }, db);
     }
 
     db.exec("COMMIT");
@@ -174,13 +293,38 @@ export async function runWorkflow(params: {
     // Fail the run before any event-driven dispatch can escape.
     const db2 = getDb();
     const failedAt = new Date().toISOString();
+    const message = err instanceof Error ? err.message : String(err);
     db2.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?").run(failedAt, runId);
     db2.prepare(`
       UPDATE steps
       SET status = 'failed', output = 'Cron setup failed before workflow startup dispatch', updated_at = ?
       WHERE run_id = ? AND status IN ('pending', 'waiting', 'running')
     `).run(failedAt, runId);
-    const message = err instanceof Error ? err.message : String(err);
+    emitEvent({
+      ts: failedAt,
+      event: "run.failed",
+      runId,
+      workflowId: workflow.id,
+      detail: `Cron setup failed before workflow startup dispatch: ${message}`,
+    });
+    const factoryRows = db2.prepare(`
+      SELECT id, factory_item_id
+      FROM factory_runs
+      WHERE antfarm_run_id = ?
+    `).all(runId) as Array<{ id: string; factory_item_id: string }>;
+    if (factoryRows.length > 0) {
+      db2.prepare(`
+        UPDATE factory_runs
+        SET status = 'failed', completed_at = ?, error_summary = ?, updated_at = ?
+        WHERE antfarm_run_id = ?
+      `).run(failedAt, message, failedAt, runId);
+      const itemIds = factoryRows.map((row) => row.factory_item_id);
+      db2.prepare(`
+        UPDATE factory_items
+        SET status = 'blocked', lifecycle_stage = 'failed', updated_at = ?
+        WHERE id IN (${itemIds.map(() => "?").join(",")})
+      `).run(failedAt, ...itemIds);
+    }
     throw new Error(`Cannot start workflow run: cron setup failed. ${message}`);
   }
 

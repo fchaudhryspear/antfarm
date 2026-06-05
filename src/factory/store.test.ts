@@ -24,6 +24,7 @@ describe("factory store", () => {
   it("creates a factory item and ledger records", () => {
     const db = memoryDb();
     const item = createFactoryItem({
+      tenantId: "flobase",
       title: "Add billing export",
       repo: "example/repo",
       issueUrl: "https://linear.app/fasoc/issue/ADP-385",
@@ -33,12 +34,14 @@ describe("factory store", () => {
     }, db);
 
     const run = createFactoryRun({
+      tenantId: "flobase",
       factoryItemId: item.id,
       workflowId: "swarm-code-review-v3",
       modelPolicy: "default",
       budget: { max_usd: 10 },
     }, db);
     const contextPack = recordFactoryContextPack({
+      tenantId: "flobase",
       factoryItemId: item.id,
       factoryRunId: run.id,
       stage: "review",
@@ -48,6 +51,7 @@ describe("factory store", () => {
       manifest: { pack_checksum: "abc123" },
     }, db);
     const agentRun = recordFactoryAgentRun({
+      tenantId: "flobase",
       factoryRunId: run.id,
       contextPackId: contextPack.id,
       agentRole: "analysis",
@@ -58,6 +62,7 @@ describe("factory store", () => {
       resultSummary: "No blockers.",
     }, db);
     recordFactoryArtifact({
+      tenantId: "flobase",
       factoryItemId: item.id,
       factoryRunId: run.id,
       agentRunId: agentRun.id,
@@ -73,6 +78,7 @@ describe("factory store", () => {
       evidenceUrl: "https://ci.example/run/1",
     }, db);
     appendFactoryEvent({
+      tenantId: "flobase",
       factoryItemId: item.id,
       factoryRunId: run.id,
       eventType: "gate.passed",
@@ -82,12 +88,18 @@ describe("factory store", () => {
 
     const status = getFactoryItemStatus(item.id, db);
     assert.equal(status.item?.title, "Add billing export");
+    assert.equal(status.item?.tenant_id, "flobase");
     assert.equal(status.runs.length, 1);
+    assert.equal(status.runs[0].tenant_id, "flobase");
     assert.equal(status.contextPacks.length, 1);
+    assert.equal(status.contextPacks[0].tenant_id, "flobase");
     assert.equal(status.agentRuns.length, 1);
+    assert.equal(status.agentRuns[0].tenant_id, "flobase");
     assert.equal(status.agentRuns[0].context_pack_id, contextPack.id);
     assert.equal(status.artifacts.length, 1);
+    assert.equal(status.artifacts[0].tenant_id, "flobase");
     assert.equal(status.gates.length, 1);
     assert.equal(status.events.length, 2);
+    assert.ok(status.events.every((event) => event.tenant_id === "flobase"));
   });
 });

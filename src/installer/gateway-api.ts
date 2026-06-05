@@ -95,6 +95,10 @@ async function findOpenclawBinary(): Promise<string> {
 /** Run an openclaw CLI command and return stdout. */
 function runCli(args: string[]): Promise<string> {
   return new Promise(async (resolve, reject) => {
+    if (process.env.ANTFARM_DISABLE_OPENCLAW_CLI_FALLBACK === "1") {
+      reject(new Error("OpenClaw CLI fallback disabled by ANTFARM_DISABLE_OPENCLAW_CLI_FALLBACK"));
+      return;
+    }
     const bin = await findOpenclawBinary();
     const finalArgs = bin === "npx" ? ["openclaw", ...args] : args;
     execFile(bin, finalArgs, { timeout: 30_000 }, (err, stdout, stderr) => {
@@ -109,7 +113,7 @@ const UPDATE_HINT =
 
 function isTransientGatewayFailure(status: number | undefined): boolean {
   if (status === undefined) return true;
-  return status === 404 || status >= 500;
+  return status === 401 || status === 403 || status === 404 || status >= 500;
 }
 
 /** Retry helper with exponential backoff for transient gateway failures. */

@@ -25,6 +25,7 @@ export type ProductionFailureCause =
 
 export type FactoryItem = {
   id: string;
+  tenant_id: string | null;
   title: string;
   description: string;
   repo: string | null;
@@ -41,6 +42,7 @@ export type FactoryItem = {
 
 export type FactoryRun = {
   id: string;
+  tenant_id: string | null;
   factory_item_id: string;
   workflow_id: string;
   antfarm_run_id: string | null;
@@ -56,6 +58,7 @@ export type FactoryRun = {
 
 export type FactoryAgentRun = {
   id: string;
+  tenant_id: string | null;
   factory_run_id: string;
   context_pack_id: string | null;
   antfarm_step_id: string | null;
@@ -76,6 +79,7 @@ export type FactoryAgentRun = {
 
 export type FactoryContextPack = {
   id: string;
+  tenant_id: string | null;
   factory_item_id: string;
   factory_run_id: string | null;
   stage: string;
@@ -191,6 +195,7 @@ function rollbackPlanForDeployment(deploymentEventId: string | undefined, db: Da
 
 export function createFactoryItem(input: {
   id?: string;
+  tenantId?: string;
   title: string;
   description?: string;
   repo?: string;
@@ -204,11 +209,12 @@ export function createFactoryItem(input: {
   const now = nowIso();
   db.prepare(`
     INSERT INTO factory_items (
-      id, title, description, repo, issue_url, source, priority, status,
+      id, tenant_id, title, description, repo, issue_url, source, priority, status,
       lifecycle_stage, requested_by, owner, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 'intake', ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'intake', ?, ?, ?, ?)
   `).run(
     id,
+    input.tenantId ?? null,
     input.title,
     input.description ?? "",
     input.repo ?? null,
@@ -229,9 +235,12 @@ export function getFactoryItem(id: string, db: DatabaseSync = getDb()): FactoryI
 
 export function createFactoryRun(input: {
   id?: string;
+  tenantId?: string;
   factoryItemId: string;
   workflowId: string;
   antfarmRunId?: string;
+  status?: FactoryRunStatus;
+  startedAt?: string;
   modelPolicy?: string;
   budget?: unknown;
 }, db: DatabaseSync = getDb()): FactoryRun {
@@ -239,25 +248,29 @@ export function createFactoryRun(input: {
   const now = nowIso();
   db.prepare(`
     INSERT INTO factory_runs (
-      id, factory_item_id, workflow_id, antfarm_run_id, status, model_policy,
-      budget_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+      id, tenant_id, factory_item_id, workflow_id, antfarm_run_id, status,
+      started_at, model_policy, budget_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
+    input.tenantId ?? null,
     input.factoryItemId,
     input.workflowId,
     input.antfarmRunId ?? null,
+    input.status ?? "pending",
+    input.startedAt ?? null,
     input.modelPolicy ?? null,
     jsonOrNull(input.budget),
     now,
     now,
   );
-  appendFactoryEvent({ factoryItemId: input.factoryItemId, factoryRunId: id, eventType: "factory_run.created", payload: { workflow_id: input.workflowId } }, db);
+  appendFactoryEvent({ tenantId: input.tenantId, factoryItemId: input.factoryItemId, factoryRunId: id, eventType: "factory_run.created", payload: { workflow_id: input.workflowId } }, db);
   return db.prepare("SELECT * FROM factory_runs WHERE id = ?").get(id) as FactoryRun;
 }
 
 export function recordFactoryAgentRun(input: {
   id?: string;
+  tenantId?: string;
   factoryRunId: string;
   contextPackId?: string;
   antfarmStepId?: string;
@@ -275,12 +288,13 @@ export function recordFactoryAgentRun(input: {
   const now = nowIso();
   db.prepare(`
     INSERT INTO factory_agent_runs (
-      id, factory_run_id, context_pack_id, antfarm_step_id, agent_role, agent_name, status,
+      id, tenant_id, factory_run_id, context_pack_id, antfarm_step_id, agent_role, agent_name, status,
       workspace_path, branch_name, model, token_usage_json, cost_estimate,
       result_summary, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
+    input.tenantId ?? null,
     input.factoryRunId,
     input.contextPackId ?? null,
     input.antfarmStepId ?? null,
@@ -301,6 +315,7 @@ export function recordFactoryAgentRun(input: {
 
 export function recordFactoryContextPack(input: {
   id?: string;
+  tenantId?: string;
   factoryItemId: string;
   factoryRunId?: string;
   stage: string;
@@ -313,11 +328,12 @@ export function recordFactoryContextPack(input: {
   const id = input.id ?? crypto.randomUUID();
   db.prepare(`
     INSERT INTO factory_context_packs (
-      id, factory_item_id, factory_run_id, stage, agent_role, path, checksum,
+      id, tenant_id, factory_item_id, factory_run_id, stage, agent_role, path, checksum,
       manifest_json, redaction_ruleset_version, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
+    input.tenantId ?? null,
     input.factoryItemId,
     input.factoryRunId ?? null,
     input.stage,
@@ -333,6 +349,7 @@ export function recordFactoryContextPack(input: {
 
 export function recordFactoryArtifact(input: {
   id?: string;
+  tenantId?: string;
   factoryItemId: string;
   factoryRunId?: string;
   agentRunId?: string;
@@ -344,11 +361,12 @@ export function recordFactoryArtifact(input: {
   const id = input.id ?? crypto.randomUUID();
   db.prepare(`
     INSERT INTO factory_artifacts (
-      id, factory_item_id, factory_run_id, agent_run_id, artifact_type,
+      id, tenant_id, factory_item_id, factory_run_id, agent_run_id, artifact_type,
       title, path_or_url, checksum, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
+    input.tenantId ?? null,
     input.factoryItemId,
     input.factoryRunId ?? null,
     input.agentRunId ?? null,
@@ -400,6 +418,7 @@ export function upsertFactoryGate(input: {
 
 export function appendFactoryEvent(input: {
   id?: string;
+  tenantId?: string;
   factoryItemId: string;
   factoryRunId?: string;
   eventType: string;
@@ -409,10 +428,11 @@ export function appendFactoryEvent(input: {
   const id = input.id ?? crypto.randomUUID();
   db.prepare(`
     INSERT INTO factory_events (
-      id, factory_item_id, factory_run_id, event_type, actor, payload_json, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      id, tenant_id, factory_item_id, factory_run_id, event_type, actor, payload_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
+    input.tenantId ?? null,
     input.factoryItemId,
     input.factoryRunId ?? null,
     input.eventType,
