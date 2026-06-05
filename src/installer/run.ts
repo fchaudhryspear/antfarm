@@ -112,6 +112,26 @@ export async function runWorkflow(params: {
 
   db.exec("BEGIN");
   try {
+    const conflictingTenantRun = tenantId
+      ? db.prepare(`
+        SELECT id, tenant_id FROM runs
+        WHERE workflow_id = ? AND status = 'running'
+          AND tenant_id IS NOT NULL
+          AND tenant_id != ?
+        LIMIT 1
+      `).get(workflow.id, tenantId) as { id: string; tenant_id: string | null } | undefined
+      : db.prepare(`
+        SELECT id, tenant_id FROM runs
+        WHERE workflow_id = ? AND status = 'running'
+          AND tenant_id IS NOT NULL
+        LIMIT 1
+      `).get(workflow.id) as { id: string; tenant_id: string | null } | undefined;
+    if (conflictingTenantRun) {
+      throw new Error(
+        `Cannot start workflow run: workflow "${workflow.id}" already has a running run for a different tenant (${conflictingTenantRun.tenant_id ?? "legacy/null"}).`
+      );
+    }
+
     const notifyUrl = params.notifyUrl ?? workflow.notifications?.url ?? null;
     const insertRun = db.prepare(
       "INSERT INTO runs (id, run_number, workflow_id, task, status, context, notify_url, created_at, updated_at) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)"
@@ -128,9 +148,13 @@ export async function runWorkflow(params: {
     validateDependencyGraph(workflow.steps);
 
     // Cancel stale runs for this workflow — prevent claim competition (Bug #34)
-    const staleRuns = db.prepare(
-      "SELECT id FROM runs WHERE workflow_id = ? AND status = 'running' AND id != ?"
-    ).all(workflow.id, runId) as Array<{ id: string }>;
+    const staleRuns = tenantId
+      ? db.prepare(
+        "SELECT id FROM runs WHERE workflow_id = ? AND status = 'running' AND id != ? AND (tenant_id = ? OR tenant_id IS NULL)"
+      ).all(workflow.id, runId, tenantId) as Array<{ id: string }>
+      : db.prepare(
+        "SELECT id FROM runs WHERE workflow_id = ? AND status = 'running' AND id != ? AND tenant_id IS NULL"
+      ).all(workflow.id, runId) as Array<{ id: string }>;
 
     if (staleRuns.length > 0) {
       console.warn(`[antfarm] Cancelling ${staleRuns.length} stale run(s) for ${workflow.id}: ${staleRuns.map(r => r.id).join(', ')}`);
@@ -269,13 +293,38 @@ export async function runWorkflow(params: {
     // Fail the run before any event-driven dispatch can escape.
     const db2 = getDb();
     const failedAt = new Date().toISOString();
+    const message = err instanceof Error ? err.message : String(err);
     db2.prepare("UPDATE runs SET status = 'failed', updated_at = ? WHERE id = ?").run(failedAt, runId);
     db2.prepare(`
       UPDATE steps
       SET status = 'failed', output = 'Cron setup failed before workflow startup dispatch', updated_at = ?
       WHERE run_id = ? AND status IN ('pending', 'waiting', 'running')
     `).run(failedAt, runId);
-    const message = err instanceof Error ? err.message : String(err);
+    emitEvent({
+      ts: failedAt,
+      event: "run.failed",
+      runId,
+      workflowId: workflow.id,
+      detail: `Cron setup failed before workflow startup dispatch: ${message}`,
+    });
+    const factoryRows = db2.prepare(`
+      SELECT id, factory_item_id
+      FROM factory_runs
+      WHERE antfarm_run_id = ?
+    `).all(runId) as Array<{ id: string; factory_item_id: string }>;
+    if (factoryRows.length > 0) {
+      db2.prepare(`
+        UPDATE factory_runs
+        SET status = 'failed', completed_at = ?, error_summary = ?, updated_at = ?
+        WHERE antfarm_run_id = ?
+      `).run(failedAt, message, failedAt, runId);
+      const itemIds = factoryRows.map((row) => row.factory_item_id);
+      db2.prepare(`
+        UPDATE factory_items
+        SET status = 'blocked', lifecycle_stage = 'failed', updated_at = ?
+        WHERE id IN (${itemIds.map(() => "?").join(",")})
+      `).run(failedAt, ...itemIds);
+    }
     throw new Error(`Cannot start workflow run: cron setup failed. ${message}`);
   }
 

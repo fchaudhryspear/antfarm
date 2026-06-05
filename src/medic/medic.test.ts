@@ -6,6 +6,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+const originalCliFallback = process.env.ANTFARM_DISABLE_OPENCLAW_CLI_FALLBACK;
+
+process.env.ANTFARM_DISABLE_OPENCLAW_CLI_FALLBACK = "1";
+
+process.on("exit", () => {
+  if (originalCliFallback === undefined) {
+    delete process.env.ANTFARM_DISABLE_OPENCLAW_CLI_FALLBACK;
+  } else {
+    process.env.ANTFARM_DISABLE_OPENCLAW_CLI_FALLBACK = originalCliFallback;
+  }
+});
+
 describe("runMedicCheck", () => {
   it("completes zombie runs when every step is done", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "antfarm-medic-"));
