@@ -2,6 +2,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { DatabaseSync } from "node:sqlite";
 import { getDb } from "../db.js";
 import { resolveBundledWorkflowsDir } from "../installer/paths.js";
 import YAML from "yaml";
@@ -15,9 +16,14 @@ import {
   type FactoryItem,
   type FactoryRun,
 } from "../factory/store.js";
+import {
+  getDashboardSessionByToken,
+  type DashboardSession,
+} from "../factory/dashboard-isolation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DASHBOARD_HOST = "127.0.0.1";
+const FOUNDER_ROLES = new Set(["founder", "admin"]);
 
 interface WorkflowDef {
   id: string;
@@ -63,16 +69,144 @@ function getRunById(id: string): (RunInfo & { steps: StepInfo[] }) | null {
   return { ...run, steps };
 }
 
-export function getFactoryDashboardSnapshot(db = getDb()) {
-  const items = db.prepare("SELECT * FROM factory_items ORDER BY updated_at DESC").all() as FactoryItem[];
+export type FactoryDashboardScope = {
+  tenantId?: string;
+  actorRole?: string;
+  authorizedTenants?: string[];
+};
+
+function safeTenantId(value?: string | null): string | null {
+  const tenantId = value?.trim();
+  if (!tenantId) return null;
+  if (!/^[a-z0-9_:-]+$/i.test(tenantId)) return null;
+  return tenantId;
+}
+
+function isFounderRole(actorRole?: string): boolean {
+  return FOUNDER_ROLES.has((actorRole ?? "").trim().toLowerCase());
+}
+
+function bearerToken(req: http.IncomingMessage): string | null {
+  const header = req.headers.authorization;
+  const value = Array.isArray(header) ? header[0] : header;
+  const match = value?.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+function dashboardSession(req: http.IncomingMessage, db: DatabaseSync): DashboardSession | null {
+  const token = bearerToken(req);
+  return token ? getDashboardSessionByToken(db, token) : null;
+}
+
+function scopeStatus(scope: FactoryDashboardScope): { status: 200 | 400 | 403 | 404; reason?: string; tenantId?: string } {
+  const tenantId = safeTenantId(scope.tenantId);
+  if (!tenantId) return { status: 400, reason: "missing_tenant_scope" };
+  const authorizedTenants = scope.authorizedTenants ?? [tenantId];
+  if (!authorizedTenants.includes(tenantId) && !isFounderRole(scope.actorRole)) {
+    return { status: 404, reason: "tenant_not_authorized" };
+  }
+  return { status: 200, tenantId };
+}
+
+function tenantWhereClause(tenantId: string): { sql: string; params: [string] } {
+  return { sql: "WHERE tenant_id = ?", params: [tenantId] };
+}
+
+export function getFactoryTenantMetadata(db = getDb(), scope: FactoryDashboardScope = {}) {
+  const tenantId = safeTenantId(scope.tenantId);
+  if (!tenantId && !isFounderRole(scope.actorRole)) {
+    return { status: 400 as const, error: "missing_tenant_scope" };
+  }
+
+  const authorizedTenants = scope.authorizedTenants ?? (tenantId ? [tenantId] : []);
+  const rows = tenantId
+    ? db.prepare(`
+      SELECT id, display_name, compliance_class, status
+      FROM factory_tenants
+      WHERE id = ?
+      ORDER BY id ASC
+    `).all(tenantId)
+    : db.prepare(`
+      SELECT id, display_name, compliance_class, status
+      FROM factory_tenants
+      ORDER BY id ASC
+    `).all();
+
+  const tenants = (rows as Array<Record<string, unknown>>).filter((tenant) => {
+    const id = String(tenant.id);
+    return isFounderRole(scope.actorRole) || authorizedTenants.includes(id);
+  });
+
+  if (tenantId && tenants.length === 0) return { status: 404 as const, error: "tenant_not_authorized" };
+  return {
+    status: 200 as const,
+    scope: tenantId ? "tenant" : "aggregate_metadata",
+    tenants,
+  };
+}
+
+export function getFactoryDashboardAggregate(db = getDb(), scope: FactoryDashboardScope = {}) {
+  if (!isFounderRole(scope.actorRole)) {
+    return { status: 403 as const, error: "aggregate_scope_requires_founder" };
+  }
+
+  const tenantRows = db.prepare(`
+    SELECT t.id, t.display_name, t.compliance_class, t.status,
+      COUNT(fi.id) AS item_count,
+      SUM(CASE WHEN fi.status = 'queued' THEN 1 ELSE 0 END) AS queued_count,
+      SUM(CASE WHEN fi.status = 'running' THEN 1 ELSE 0 END) AS running_count,
+      SUM(CASE WHEN fi.status = 'blocked' THEN 1 ELSE 0 END) AS blocked_count,
+      SUM(CASE WHEN fi.status = 'done' THEN 1 ELSE 0 END) AS done_count
+    FROM factory_tenants t
+    LEFT JOIN factory_items fi ON fi.tenant_id = t.id
+    GROUP BY t.id, t.display_name, t.compliance_class, t.status
+    ORDER BY t.id ASC
+  `).all() as Array<Record<string, unknown>>;
+
+  const activeRuns = db.prepare(`
+    SELECT COALESCE(tenant_id, 'unscoped') AS tenant_id, COUNT(*) AS active_run_count
+    FROM factory_runs
+    WHERE status IN ('pending', 'running', 'blocked')
+    GROUP BY COALESCE(tenant_id, 'unscoped')
+  `).all() as Array<{ tenant_id: string; active_run_count: number }>;
+  const activeRunCounts = new Map(activeRuns.map((row) => [row.tenant_id, row.active_run_count]));
+
+  return {
+    status: 200 as const,
+    scope: "aggregate_metadata",
+    generatedAt: new Date().toISOString(),
+    tenants: tenantRows.map((tenant) => ({
+      id: tenant.id,
+      display_name: tenant.display_name,
+      compliance_class: tenant.compliance_class,
+      status: tenant.status,
+      item_count: Number(tenant.item_count ?? 0),
+      queued_count: Number(tenant.queued_count ?? 0),
+      running_count: Number(tenant.running_count ?? 0),
+      blocked_count: Number(tenant.blocked_count ?? 0),
+      done_count: Number(tenant.done_count ?? 0),
+      active_run_count: Number(activeRunCounts.get(String(tenant.id)) ?? 0),
+    })),
+  };
+}
+
+export function getFactoryDashboardSnapshot(db = getDb(), scope: FactoryDashboardScope = {}) {
+  const scopeResult = scopeStatus(scope);
+  if (scopeResult.status !== 200) {
+    return { status: scopeResult.status, error: scopeResult.reason };
+  }
+  const tenantId = scopeResult.tenantId!;
+  const tenantFilter = tenantWhereClause(tenantId);
+
+  const items = db.prepare(`SELECT * FROM factory_items ${tenantFilter.sql} ORDER BY updated_at DESC`).all(...tenantFilter.params) as FactoryItem[];
   const queue = items.filter((item) => ["queued", "blocked", "running"].includes(item.status));
   const activeRuns = db.prepare(`
     SELECT fr.*, fi.title AS factory_item_title, fi.repo AS factory_item_repo
     FROM factory_runs fr
     JOIN factory_items fi ON fi.id = fr.factory_item_id
-    WHERE fr.status IN ('pending', 'running', 'blocked')
+    WHERE fi.tenant_id = ? AND fr.status IN ('pending', 'running', 'blocked')
     ORDER BY fr.updated_at DESC
-  `).all() as Array<FactoryRun & { factory_item_title: string; factory_item_repo: string | null }>;
+  `).all(tenantId) as Array<FactoryRun & { factory_item_title: string; factory_item_repo: string | null }>;
 
   const itemDetails = items.map((item) => {
     const runs = db.prepare("SELECT * FROM factory_runs WHERE factory_item_id = ? ORDER BY created_at DESC").all(item.id) as FactoryRun[];
@@ -125,6 +259,9 @@ export function getFactoryDashboardSnapshot(db = getDb()) {
   }, { maxUsd: 0 });
 
   return {
+    status: 200 as const,
+    scope: "tenant",
+    tenantId,
     generatedAt: new Date().toISOString(),
     queue,
     activeRuns,
@@ -151,7 +288,7 @@ function serveHTML(res: http.ServerResponse) {
   res.end(fs.readFileSync(filePath, "utf-8"));
 }
 
-export function startDashboard(port = 3333, host = DEFAULT_DASHBOARD_HOST): http.Server {
+export function startDashboard(port = 3333, host = DEFAULT_DASHBOARD_HOST, dashboardDb?: DatabaseSync): http.Server {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
     const p = url.pathname;
@@ -185,8 +322,34 @@ export function startDashboard(port = 3333, host = DEFAULT_DASHBOARD_HOST): http
       return json(res, getRuns(wf));
     }
 
+    if (p === "/api/factory/tenant-metadata") {
+      const db = dashboardDb ?? getDb();
+      const session = dashboardSession(req, db);
+      if (!session) return json(res, { status: 401, error: "dashboard_session_required" }, 401);
+      const body = getFactoryTenantMetadata(db, {
+        tenantId: url.searchParams.get("tenant_id") ?? undefined,
+        actorRole: session.actorRole,
+        authorizedTenants: session.authorizedTenants,
+      });
+      return json(res, body, body.status);
+    }
+
     if (p === "/api/factory/dashboard") {
-      return json(res, getFactoryDashboardSnapshot());
+      const db = dashboardDb ?? getDb();
+      const session = dashboardSession(req, db);
+      if (!session) return json(res, { status: 401, error: "dashboard_session_required" }, 401);
+      if (url.searchParams.get("scope") === "aggregate") {
+        const body = getFactoryDashboardAggregate(db, {
+          actorRole: session.actorRole,
+        });
+        return json(res, body, body.status);
+      }
+      const body = getFactoryDashboardSnapshot(db, {
+        tenantId: url.searchParams.get("tenant_id") ?? undefined,
+        actorRole: session.actorRole,
+        authorizedTenants: session.authorizedTenants,
+      });
+      return json(res, body, body.status);
     }
 
     // Medic API

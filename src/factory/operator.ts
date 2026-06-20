@@ -68,6 +68,7 @@ function writeAudit(input: {
 
 export function createOrLinkFactoryItem(input: {
   factoryItemId?: string;
+  tenantId?: string;
   title: string;
   description?: string;
   repo?: string;
@@ -83,6 +84,7 @@ export function createOrLinkFactoryItem(input: {
   const existing = input.factoryItemId ? getFactoryItem(input.factoryItemId, db) : null;
   const item = existing ?? createFactoryItem({
     id: input.factoryItemId,
+    tenantId: input.tenantId,
     title: input.title,
     description: input.description,
     repo: input.repo,
@@ -94,6 +96,7 @@ export function createOrLinkFactoryItem(input: {
   }, db);
 
   appendFactoryEvent({
+    tenantId: item.tenant_id ?? undefined,
     factoryItemId: item.id,
     eventType: existing ? "operator.factory_item.linked" : "operator.factory_item.created",
     actor: operator,
